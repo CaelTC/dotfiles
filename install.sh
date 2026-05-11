@@ -30,9 +30,10 @@ symlink() {
       rm "$dst"
     fi
   elif [ -e "$dst" ]; then
-    warn "Backing up existing $dst → $BACKUP_DIR/"
-    mkdir -p "$BACKUP_DIR/$(dirname "${dst/#$HOME\//}")"
-    cp -r "$dst" "$BACKUP_DIR/${dst/#$HOME\//}"
+    local backup_path="$BACKUP_DIR/${dst/#$HOME\//}"
+    warn "Backing up existing $dst → $backup_path"
+    mkdir -p "$(dirname "$backup_path")"
+    cp -r "$dst" "$backup_path"
     rm -rf "$dst"
   fi
 
