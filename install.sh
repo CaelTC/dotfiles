@@ -45,15 +45,35 @@ echo "Installing dotfiles from $DOTFILES_DIR"
 echo "────────────────────────────────────────"
 echo ""
 
-# ── Claude Code ──────────────────────────────────────────────────────────────
-symlink "$DOTFILES_DIR/claude/settings.json" "$HOME/.claude/settings.json"
+# ── Homebrew ─────────────────────────────────────────────────────────────────
+if ! command -v brew &>/dev/null; then
+  info "Installing Homebrew..."
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+else
+  info "Homebrew already installed"
+fi
 
 # ── Ghostty ──────────────────────────────────────────────────────────────────
+if ! command -v ghostty &>/dev/null; then
+  info "Installing Ghostty..."
+  brew install --cask ghostty
+else
+  info "Ghostty already installed"
+fi
+
 symlink "$DOTFILES_DIR/ghostty/config" "$HOME/.config/ghostty/config"
+
+# ── Claude Code ──────────────────────────────────────────────────────────────
+if ! command -v claude &>/dev/null; then
+  info "Installing Claude Code..."
+  npm install -g @anthropic-ai/claude-code
+else
+  info "Claude Code already installed"
+fi
+
+symlink "$DOTFILES_DIR/claude/settings.json" "$HOME/.claude/settings.json"
 
 echo ""
 echo "────────────────────────────────────────"
 echo "Done."
-echo ""
-warn "Review ghostty/config — 'working-directory' is set to a machine-specific path."
 echo ""
