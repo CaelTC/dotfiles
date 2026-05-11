@@ -74,6 +74,7 @@ fi
 
 symlink "$DOTFILES_DIR/claude/settings.json" "$HOME/.claude/settings.json"
 symlink "$DOTFILES_DIR/claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
+symlink "$DOTFILES_DIR/claude/agents" "$HOME/.claude/agents"
 
 # ── Neovim ───────────────────────────────────────────────────────────────────
 if ! command -v nvim &>/dev/null; then
