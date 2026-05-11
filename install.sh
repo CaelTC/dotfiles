@@ -86,7 +86,7 @@ fi
 
 if [ ! -d "$DOTFILES_DIR/nvim" ]; then
   info "Adding nvim_config submodule..."
-  git -C "$DOTFILES_DIR" submodule add https://github.com/CaelTC/nvim_config.git nvim
+  git -C "$DOTFILES_DIR" submodule add git@github.com:CaelTC/nvim_config.git nvim
 else
   info "Updating nvim_config submodule..."
   git -C "$DOTFILES_DIR" submodule update --init --remote nvim
