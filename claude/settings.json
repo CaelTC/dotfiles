@@ -1,0 +1,17 @@
+{
+  "enabledPlugins": {
+    "warp@claude-code-warp": true,
+    "rust-analyzer-lsp@claude-plugins-official": true,
+    "pyright-lsp@claude-plugins-official": true
+  },
+  "extraKnownMarketplaces": {
+    "claude-code-warp": {
+      "source": {
+        "source": "github",
+        "repo": "warpdotdev/claude-code-warp"
+      }
+    }
+  },
+  "effortLevel": "xhigh",
+  "editorMode": "vim"
+}

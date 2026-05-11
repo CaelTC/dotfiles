@@ -1,0 +1,35 @@
+# Font — install with: brew install --cask font-jetbrains-mono-nerd-font
+font-family = JetBrainsMonoNL Nerd Font Mono
+font-size = 14
+font-feature = -calt -liga -dlig
+
+# Theme — auto-switches with macOS appearance
+theme = light:GitHub Light High Contrast,dark:GitHub Dark High Contrast
+window-theme = auto
+
+# Window chrome
+macos-titlebar-style = transparent
+macos-non-native-fullscreen = true
+macos-option-as-alt = true
+window-padding-x = 8
+window-padding-y = 4
+background-opacity = 1.0
+
+# Quick terminal — F4 to toggle
+keybind = global:f4=toggle_quick_terminal
+quick-terminal-position = top
+quick-terminal-screen = main
+quick-terminal-animation-duration = 0.1
+
+# Default working directory
+working-directory = /Users/macbook/Documents
+
+# QoL
+confirm-close-surface = false
+quit-after-last-window-closed = true
+copy-on-select = true
+mouse-hide-while-typing = true
+
+# Cursor
+cursor-style = block
+cursor-style-blink = false
