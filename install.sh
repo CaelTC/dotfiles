@@ -73,6 +73,25 @@ else
 fi
 
 symlink "$DOTFILES_DIR/claude/settings.json" "$HOME/.claude/settings.json"
+symlink "$DOTFILES_DIR/claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
+
+# ── Neovim ───────────────────────────────────────────────────────────────────
+if ! command -v nvim &>/dev/null; then
+  info "Installing Neovim..."
+  brew install neovim
+else
+  info "Neovim already installed"
+fi
+
+if [ ! -d "$DOTFILES_DIR/nvim" ]; then
+  info "Adding nvim_config submodule..."
+  git -C "$DOTFILES_DIR" submodule add https://github.com/CaelTC/nvim_config.git nvim
+else
+  info "Updating nvim_config submodule..."
+  git -C "$DOTFILES_DIR" submodule update --init --remote nvim
+fi
+
+symlink "$DOTFILES_DIR/nvim" "$HOME/.config/nvim"
 
 echo ""
 echo "────────────────────────────────────────"
