@@ -13,5 +13,9 @@
     }
   },
   "effortLevel": "xhigh",
-  "editorMode": "vim"
+  "editorMode": "vim",
+  "statusLine": {
+    "type": "command",
+    "command": "sh /Users/macbook/.claude/statusline-command.sh"
+  }
 }
