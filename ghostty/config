@@ -22,7 +22,7 @@ quick-terminal-screen = main
 quick-terminal-animation-duration = 0.1
 
 # Default working directory
-working-directory = /Users/macbook/Documents
+working-directory = ~/Documents
 
 # QoL
 confirm-close-surface = false
