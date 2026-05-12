@@ -19,7 +19,16 @@ export PATH="opt/homebrew/bin:$PATH"
 export PATH="opt/homebrew/sbin:$PATH"
 export PATH="$HOME/.cargo/bin:$PATH"
 cd() {
-    builtin cd "$@" && ls -C
+    if [[ $1 =~ '^\.+$' ]]; then
+        local dots=${#1}
+        local path=".."
+        for ((i=2; i<=dots; i++)); do
+            path+="/.."
+        done
+        builtin cd "$path" && ls -C
+    else
+        builtin cd "$@" && ls -C
+    fi
 }
 eval "$(~/.local/bin/mise activate)"
 

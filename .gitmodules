@@ -4,3 +4,6 @@
 [submodule "nvim"]
 	path = nvim
 	url = git@github.com:CaelTC/nvim_config.git
+[submodule "ssh-ls"]
+	path = ssh-ls
+	url = git@github.com:CaelTC/ssh-ls.git

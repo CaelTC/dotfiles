@@ -94,6 +94,17 @@ fi
 
 symlink "$DOTFILES_DIR/nvim" "$HOME/.config/nvim"
 
+# ── ssh-ls ───────────────────────────────────────────────────────────────────
+if [ ! -d "$DOTFILES_DIR/ssh-ls" ]; then
+  info "Adding ssh-ls submodule..."
+  git -C "$DOTFILES_DIR" submodule add git@github.com:CaelTC/ssh-ls.git ssh-ls
+else
+  info "Updating ssh-ls submodule..."
+  git -C "$DOTFILES_DIR" submodule update --init --remote ssh-ls
+fi
+
+"$DOTFILES_DIR/ssh-ls/install.sh"
+
 # ── Zsh ──────────────────────────────────────────────────────────────────────
 symlink "$DOTFILES_DIR/zsh/.zshrc" "$HOME/.zshrc"
 
