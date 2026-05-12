@@ -94,6 +94,9 @@ fi
 
 symlink "$DOTFILES_DIR/nvim" "$HOME/.config/nvim"
 
+# ── Zsh ──────────────────────────────────────────────────────────────────────
+symlink "$DOTFILES_DIR/zsh/.zshrc" "$HOME/.zshrc"
+
 echo ""
 echo "────────────────────────────────────────"
 echo "Done."
