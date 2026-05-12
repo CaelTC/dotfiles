@@ -32,5 +32,6 @@
       "Bash(cargo check *)",
       "Bash(cargo test *)"
     ]
-  }
+  },
+  "model": "opus"
 }
