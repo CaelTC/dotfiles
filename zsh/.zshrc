@@ -19,13 +19,13 @@ export PATH="opt/homebrew/bin:$PATH"
 export PATH="opt/homebrew/sbin:$PATH"
 export PATH="$HOME/.cargo/bin:$PATH"
 cd() {
-    if [[ $1 =~ '^\.+$' ]]; then
+    if [[ $1 =~ '^\.{3,}$' ]]; then
         local dots=${#1}
-        local path=".."
-        for ((i=2; i<=dots; i++)); do
-            path+="/.."
+        local target=".."
+        for ((i=2; i<dots; i++)); do
+            target+="/.."
         done
-        builtin cd "$path" && ls -C
+        builtin cd "$target" && ls -C
     else
         builtin cd "$@" && ls -C
     fi
