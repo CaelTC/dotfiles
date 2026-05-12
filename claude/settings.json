@@ -18,5 +18,19 @@
   },
   "effortLevel": "xhigh",
   "advisorModel": "opus",
-  "editorMode": "vim"
+  "editorMode": "vim",
+  "permissions": {
+    "allow": [
+      "Bash(ghostty +list-themes)",
+      "Bash(ghostty +list-fonts)",
+      "Bash(ghostty +show-config *)",
+      "Bash(ghostty +validate-config *)",
+      "Read(/Users/macbook/.config/ghostty/**)",
+      "Bash(cargo --version)",
+      "Bash(cargo init *)",
+      "Bash(cargo build *)",
+      "Bash(cargo check *)",
+      "Bash(cargo test *)"
+    ]
+  }
 }
