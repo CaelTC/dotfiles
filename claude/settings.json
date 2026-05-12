@@ -5,7 +5,7 @@
       "Bash(ghostty +list-fonts)",
       "Bash(ghostty +show-config *)",
       "Bash(ghostty +validate-config *)",
-      "Read(/Users/macbook/.config/ghostty/**)",
+      "Read(~/.config/ghostty/**)",
       "Bash(cargo --version)",
       "Bash(cargo init *)",
       "Bash(cargo build *)",
@@ -15,7 +15,7 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "sh /Users/macbook/.claude/statusline-command.sh"
+    "command": "sh ~/.claude/statusline-command.sh"
   },
   "enabledPlugins": {
     "warp@claude-code-warp": true,
