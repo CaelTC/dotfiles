@@ -1,4 +1,18 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(ghostty +list-themes)",
+      "Bash(ghostty +list-fonts)",
+      "Bash(ghostty +show-config *)",
+      "Bash(ghostty +validate-config *)",
+      "Read(/Users/macbook/.config/ghostty/**)",
+      "Bash(cargo --version)",
+      "Bash(cargo init *)",
+      "Bash(cargo build *)",
+      "Bash(cargo check *)",
+      "Bash(cargo test *)"
+    ]
+  },
   "statusLine": {
     "type": "command",
     "command": "sh /Users/macbook/.claude/statusline-command.sh"
@@ -18,20 +32,5 @@
   },
   "effortLevel": "xhigh",
   "advisorModel": "opus",
-  "editorMode": "vim",
-  "permissions": {
-    "allow": [
-      "Bash(ghostty +list-themes)",
-      "Bash(ghostty +list-fonts)",
-      "Bash(ghostty +show-config *)",
-      "Bash(ghostty +validate-config *)",
-      "Read(/Users/macbook/.config/ghostty/**)",
-      "Bash(cargo --version)",
-      "Bash(cargo init *)",
-      "Bash(cargo build *)",
-      "Bash(cargo check *)",
-      "Bash(cargo test *)"
-    ]
-  },
-  "model": "opus"
+  "editorMode": "vim"
 }
