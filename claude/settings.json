@@ -1,4 +1,8 @@
 {
+  "statusLine": {
+    "type": "command",
+    "command": "sh /Users/macbook/.claude/statusline-command.sh"
+  },
   "enabledPlugins": {
     "warp@claude-code-warp": true,
     "rust-analyzer-lsp@claude-plugins-official": true,
@@ -13,9 +17,6 @@
     }
   },
   "effortLevel": "xhigh",
-  "editorMode": "vim",
-  "statusLine": {
-    "type": "command",
-    "command": "sh /Users/macbook/.claude/statusline-command.sh"
-  }
+  "advisorModel": "opus",
+  "editorMode": "vim"
 }
