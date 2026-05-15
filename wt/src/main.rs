@@ -118,6 +118,26 @@ fn adopt(args: &[String]) -> Result<()> {
             wt_path.display()
         );
     }
+
+    // Bail early if .git/worktrees/ is not writable (e.g. root-owned from a prior
+    // privileged worktree). Catching this before any file moves avoids leaving the
+    // repo in a half-adopted, unrecoverable state.
+    let worktrees_dir = dotgit.join("worktrees");
+    if worktrees_dir.exists() {
+        let probe = worktrees_dir.join(".wt-probe");
+        std::fs::create_dir(&probe)
+            .and_then(|_| std::fs::remove_dir(&probe))
+            .map_err(|_| {
+                let user = std::env::var("USER").unwrap_or_else(|_| "$(whoami)".into());
+                anyhow::anyhow!(
+                    "{} is not writable — likely root-owned from a prior privileged worktree.\n\
+                     Fix with:\n  sudo chown -R {user}:staff {}",
+                    worktrees_dir.display(),
+                    worktrees_dir.display()
+                )
+            })?;
+    }
+
     let wt_top_component = branch.split('/').next().unwrap_or("");
 
     let candidates = scan_top_level_ignored(&path)?;
