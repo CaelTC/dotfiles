@@ -317,8 +317,12 @@ fn new(args: &[String]) -> Result<()> {
     let wt_path_str = wt_path.to_str().unwrap();
 
     let has_remote = ref_exists(&bare, &format!("refs/remotes/origin/{branch}"))?;
+    let has_local = ref_exists(&bare, &format!("refs/heads/{branch}"))?;
 
-    if has_remote {
+    if has_local {
+        // Branch already exists locally — just check it out into a new worktree.
+        run_git(&bare, &["worktree", "add", wt_path_str, branch])?;
+    } else if has_remote {
         run_git(
             &bare,
             &[
