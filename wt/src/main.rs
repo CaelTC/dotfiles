@@ -14,13 +14,46 @@ struct WtConfig {
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
+        Some("help") | Some("-h") | Some("--help") => Ok(help()),
         Some("init") => init(&args[2..]),
         Some("adopt") => adopt(&args[2..]),
         Some("new") => new(&args[2..]),
         Some("rm") => rm(&args[2..]),
-        Some(cmd) => bail!("unknown command: {cmd}"),
-        None => bail!("usage: wt <command>"),
+        Some(cmd) => bail!("unknown command: {cmd}\n\nRun `wt help` for usage."),
+        None => {
+            help();
+            std::process::exit(1);
+        }
     }
+}
+
+fn help() {
+    println!(
+        "wt — manage git worktrees in a bare-host layout
+
+USAGE
+    wt <command> [args]
+
+COMMANDS
+    init <url> <parent>      Clone <url> as a bare repo under <parent> and check
+                             out the default branch as the first worktree.
+
+    adopt [path]             Convert an existing regular clone at <path> (default:
+                             cwd) into the bare-host layout, moving repo contents
+                             into a per-branch subdirectory.
+
+    new <branch> [base]      Create a new worktree for <branch>.  If the branch
+                             exists on origin it is checked out from there;
+                             otherwise a new branch is created from <base>
+                             (default: origin/HEAD).  Pass '.' as <base> to
+                             branch from the current worktree's HEAD.
+
+    rm <branch> [--force]    Remove the worktree and delete the local branch.
+                             Refuses if the branch has unpushed commits unless
+                             --force / -f is given.
+
+    help                     Show this message."
+    );
 }
 
 fn init(args: &[String]) -> Result<()> {
