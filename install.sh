@@ -85,10 +85,10 @@ else
 fi
 
 if [ ! -d "$DOTFILES_DIR/nvim" ]; then
-  info "Adding nvim_config submodule..."
+  info "Adding nvim submodule..."
   git -C "$DOTFILES_DIR" submodule add git@github.com:CaelTC/nvim_config.git nvim
 else
-  info "Updating nvim_config submodule..."
+  info "Updating nvim submodule..."
   git -C "$DOTFILES_DIR" submodule update --init --remote nvim
 fi
 
@@ -103,7 +103,16 @@ else
   git -C "$DOTFILES_DIR" submodule update --init --remote ssh-ls
 fi
 
+info "Running ssh-ls installer..."
 "$DOTFILES_DIR/ssh-ls/install.sh"
+
+# ── wt ───────────────────────────────────────────────────────────────────────
+if ! command -v cargo &>/dev/null; then
+  warn "Rust/cargo not found — skipping wt install. Install Rust from https://rustup.rs and re-run."
+else
+  info "Installing wt..."
+  cargo install --path "$DOTFILES_DIR/wt" --quiet
+fi
 
 # ── Zsh ──────────────────────────────────────────────────────────────────────
 symlink "$DOTFILES_DIR/zsh/.zshrc" "$HOME/.zshrc"
