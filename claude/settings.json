@@ -1,4 +1,5 @@
 {
+<<<<<<< Updated upstream
   "permissions": {
     "allow": [
       "Bash(ghostty +list-themes)",
@@ -17,6 +18,11 @@
   "statusLine": {
     "type": "command",
     "command": "sh ~/.claude/statusline-command.sh"
+=======
+  "statusLine": {
+    "type": "command",
+    "command": "sh /Users/macbook/.claude/statusline-command.sh"
+>>>>>>> Stashed changes
   },
   "enabledPlugins": {
     "warp@claude-code-warp": true,
@@ -33,5 +39,10 @@
     }
   },
   "effortLevel": "xhigh",
+<<<<<<< Updated upstream
   "editorMode": "vim"
+=======
+  "editorMode": "vim",
+  "model": "opus"
+>>>>>>> Stashed changes
 }
