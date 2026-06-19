@@ -33,6 +33,11 @@
     }
   },
   "effortLevel": "xhigh",
+  "voice": {
+    "enabled": true,
+    "mode": "hold"
+  },
   "editorMode": "vim",
+  "voiceEnabled": true,
   "tui": "fullscreen"
 }

@@ -33,6 +33,9 @@ cd() {
 }
 eval "$(mise activate zsh)"
 
+# initialize completion system (must run before sourcing completion files)
+autoload -Uz compinit && compinit
+
 # bun completions
 [ -s "$HOME/.bun/_bun" ] && source "$HOME/.bun/_bun"
 
@@ -55,3 +58,4 @@ fi
 unset __conda_setup
 # <<< conda initialize <<<
 
+export PATH="$HOME/.local/bin:$PATH"
