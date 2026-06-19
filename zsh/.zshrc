@@ -1,4 +1,5 @@
 alias g="git"
+alias cca='claude --permission-mode auto'
 
 eval "$(starship init zsh)"
 source $(brew --prefix)/share/zsh-autosuggestions/zsh-autosuggestions.zsh
