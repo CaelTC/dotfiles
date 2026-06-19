@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use crate::record::{Record, ReqRecord, StartRecord};
+use crate::record::{EndRecord, Record, ReqRecord, StartRecord};
 
 /// The store directory `~/.cca/sessions`.
 pub fn sessions_dir() -> Result<PathBuf> {
@@ -83,6 +83,12 @@ pub struct SessionView {
     /// The **Session**'s `req` records, in append (file) order, so a caller can
     /// window them by `ts` for the rolling **Throughput** rate.
     pub reqs: Vec<ReqRecord>,
+    /// The **Session**'s `end` record when `cca` wrote one (`claude` exited
+    /// normally); `None` while the **Session** is still running or `cca` was
+    /// killed without writing it. The lifecycle classifier reads this — plus
+    /// pid-liveness for the `None` case — to split active from **Session
+    /// History**.
+    pub end: Option<EndRecord>,
 }
 
 /// Group `(session_id, records)` streams into per-**Session** [`SessionView`]s.
@@ -102,10 +108,12 @@ where
         .map(|(id, records)| {
             let start = records.iter().find_map(|r| r.as_start().cloned());
             let reqs = records.iter().filter_map(|r| r.as_req().cloned()).collect();
+            let end = records.iter().find_map(|r| r.as_end().cloned());
             SessionView {
                 id: id.into(),
                 start,
                 reqs,
+                end,
             }
         })
         .collect()
@@ -231,6 +239,40 @@ mod tests {
         assert_eq!(v.reqs.len(), 2);
         assert_eq!(v.reqs[0].ts, 100);
         assert_eq!(v.reqs[1].ts, 200);
+    }
+
+    fn end(id: &str, ts: i64) -> Record {
+        Record::End(crate::record::EndRecord {
+            id: id.to_string(),
+            ts,
+        })
+    }
+
+    #[test]
+    fn group_sessions_carries_end_record() {
+        let views = group_sessions(vec![(
+            "aaaa",
+            vec![
+                start("aaaa", "proj-a", 11),
+                req(100, 0.1),
+                req(200, 0.2),
+                end("aaaa", 900),
+            ],
+        )]);
+        assert_eq!(views.len(), 1);
+        let v = &views[0];
+        // start + end + reqs all round-trip into the view.
+        assert_eq!(v.start.as_ref().unwrap().project, "proj-a");
+        assert_eq!(v.reqs.len(), 2);
+        let e = v.end.as_ref().expect("end present");
+        assert_eq!(e.id, "aaaa");
+        assert_eq!(e.ts, 900);
+    }
+
+    #[test]
+    fn group_sessions_end_is_none_when_no_end_record() {
+        let views = group_sessions(vec![("aaaa", vec![start("aaaa", "proj-a", 11), req(100, 0.1)])]);
+        assert!(views[0].end.is_none());
     }
 
     #[test]

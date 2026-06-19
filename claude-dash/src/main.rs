@@ -8,8 +8,12 @@
 //!   **Budget** from `anthropic-ratelimit-unified-*` headers.
 //! - `claude-dash record-start` — append a **Session**'s `start` record; the
 //!   `cca` wrapper calls this so the JSONL schema stays owned by the Rust code.
+//! - `claude-dash record-end` — append a **Session**'s `end` record when
+//!   `claude` exits; `cca` calls this so the schema stays Rust-owned and the
+//!   **Session** moves into **Session History**.
 
 mod budget;
+mod lifecycle;
 mod proxy;
 mod record;
 mod store;
@@ -21,7 +25,7 @@ use std::net::SocketAddr;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use crate::record::{Record, StartRecord};
+use crate::record::{EndRecord, Record, StartRecord};
 
 /// `claude-dash` — Budget/Throughput dashboard over the local capture **Proxy**.
 #[derive(Parser, Debug)]
@@ -63,6 +67,16 @@ enum Command {
         #[arg(long)]
         pid: i32,
     },
+
+    /// Append a **Session**'s `end` record to its store file when `claude`
+    /// exits. Invoked by the `cca` wrapper so the JSONL record shape stays owned
+    /// by the Rust code; this is what moves the **Session** into **Session
+    /// History**.
+    RecordEnd {
+        /// The minted **Session** id (store key, JSONL file stem).
+        #[arg(long)]
+        id: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -90,6 +104,18 @@ fn main() -> Result<()> {
                 project,
                 cwd,
                 pid,
+            });
+            store::append_record(&path, &record)
+        }
+        Some(Command::RecordEnd { id }) => {
+            // cca calls this when `claude` exits. The `end` ts is the Session's
+            // end time; the classifier reads it to move the Session into Session
+            // History. We own the record shape and store path.
+            let dir = store::sessions_dir()?;
+            let path = store::session_path(&dir, &id);
+            let record = Record::End(EndRecord {
+                id,
+                ts: chrono::Utc::now().timestamp_millis(),
             });
             store::append_record(&path, &record)
         }

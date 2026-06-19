@@ -74,6 +74,13 @@ trap 'kill "$proxy_pid" 2>/dev/null' EXIT INT TERM
 export ANTHROPIC_BASE_URL="$base_url"
 
 # 6. Run claude through the Proxy, passing through all args and preserving
-#    --permission auto. Not `exec` — we keep the shell alive so the EXIT trap can
-#    reap the Proxy once claude returns.
+#    --permission auto. Not `exec` — we keep the shell alive so we can write the
+#    `end` record and the EXIT trap can reap the Proxy once claude returns.
 claude --permission auto "$@"
+
+# 7. claude has returned. Write the Session's `end` record (via record-end, so
+#    the JSONL schema stays Rust-owned) — this is what moves the Session out of
+#    the active box and into Session History. Best-effort: if it fails, the TUI
+#    still detects the ended Session via pid-liveness once this shell exits.
+"$dash" record-end --id "$id" \
+  || print -u2 "cca: failed to write end record for session $id"

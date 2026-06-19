@@ -40,6 +40,10 @@ glob = "0.3"
 # Home dir resolution
 dirs = "5"
 
+# pid-liveness: one cheap `kill(pid, 0)` syscall for the Session lifecycle
+# classifier's injected liveness seam (preferred over heavy `sysinfo`).
+libc = "0.2"
+
 anyhow = "1"
 
 [dev-dependencies]

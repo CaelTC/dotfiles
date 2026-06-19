@@ -1,6 +1,6 @@
 # Session lifecycle + History
 
-Status: ready-for-agent
+Status: done
 
 ## What to build
 

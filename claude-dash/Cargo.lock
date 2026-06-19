@@ -285,6 +285,7 @@ dependencies = [
  "glob",
  "http-body-util",
  "hyper",
+ "libc",
  "notify",
  "ratatui",
  "reqwest",

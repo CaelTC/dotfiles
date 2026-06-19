@@ -1,15 +1,22 @@
 //! The `claude-dash` TUI — a read-only dashboard.
 //!
-//! This slice renders the **Budget left rail** and N concurrent **Active
-//! Session** panels:
+//! Renders the **Budget left rail**, the **Active Session** panels, and the
+//! **Session History** view:
 //! - The left rail shows the 5-hour and 7-day **Rolling Window**s with
 //!   **Utilization** as a percentage and a live countdown to each reset.
 //!   **Budget** is the newest `req` across all session files (account-wide, so
 //!   the freshest reading wins).
-//! - Each **Active Session** panel — one per **Session** present in the store —
-//!   is labelled `project · model · id` and shows that session's per-**Session**
+//! - Each **Active Session** panel — one per running **Session** — is labelled
+//!   `project · model · id` and shows that session's per-**Session**
 //!   **Throughput** as a rolling 60s tokens/min rate plus a braille sparkline,
 //!   windowed (not instantaneous) so bursty per-request data reads smoothly.
+//! - **Session History** lists the last 10 ended **Session**s as
+//!   `project · model · total tokens · duration · ended (relative)`.
+//!
+//! Active vs ended is the [`lifecycle`] classifier's call, not the TUI's: the
+//! render code only renders the classification (active panels / History rows),
+//! it never computes liveness itself. The only liveness I/O is the classifier's
+//! injected [`lifecycle::pid_alive`] adapter.
 //!
 //! Liveness comes from two sources: a `notify` file-watch on the store
 //! directory, and a ~1s tick so countdowns advance and new records appear within
@@ -30,6 +37,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Gauge, Paragraph};
 use ratatui::{Frame, Terminal};
 
+use crate::lifecycle::{self, EndedSession};
 use crate::record::ReqRecord;
 use crate::store::{self, SessionView};
 use crate::throughput::{self, RollingRate};
@@ -104,7 +112,13 @@ fn event_loop<B: ratatui::backend::Backend>(
     }
 }
 
-/// Draw the **Budget left rail** and the N concurrent **Active Session** panels.
+/// Draw the **Budget left rail**, the **Active Session** panels, and the
+/// **Session History** view.
+///
+/// The active/ended split is the [`lifecycle`] classifier's, with its
+/// pid-liveness seam satisfied by the real [`lifecycle::pid_alive`] adapter; the
+/// TUI just renders the two resulting groups. History is rebuilt from the store
+/// every read, so it survives a `claude-dash` restart for free.
 fn draw(
     frame: &mut Frame,
     budget: Option<&ReqRecord>,
@@ -118,12 +132,36 @@ fn draw(
         .split(frame.area());
 
     draw_budget_rail(frame, chunks[0], budget, now_epoch);
-    draw_sessions(frame, chunks[1], sessions, now_ms);
+
+    // Classify every Session into Active vs Session History — pid-liveness is the
+    // classifier's only I/O, injected here as the real adapter.
+    let (active, history) = lifecycle::split_sessions(sessions, lifecycle::pid_alive);
+
+    // The right area stacks the Active Session panels above Session History.
+    // History takes a fixed lower band so the active panels keep most of the
+    // height; final Budget-specific polish is a later slice.
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(history_height(history.len()))])
+        .split(chunks[1]);
+
+    draw_sessions(frame, rows[0], &active, now_ms);
+    draw_history(frame, rows[1], &history, now_ms);
 }
 
-/// Lay the **Session**s out as a vertical stack of equal panels — one **Active
-/// Session** panel per **Session** present in the store.
-fn draw_sessions(frame: &mut Frame, area: Rect, sessions: &[SessionView], now_ms: i64) {
+/// The height to give the **Session History** band: a bordered box plus one row
+/// per ended **Session** (and one for the empty placeholder), capped so the
+/// **Active Session** panels always keep the bulk of the area.
+fn history_height(rows: usize) -> u16 {
+    // 2 for the top/bottom border + at least one content row, at most 10.
+    let content = rows.clamp(1, 10) as u16;
+    content + 2
+}
+
+/// Lay the **Active Session**s out as a vertical stack of equal panels — one
+/// panel per **Active Session** (a **Session** the [`lifecycle`] classifier
+/// judged still running).
+fn draw_sessions(frame: &mut Frame, area: Rect, sessions: &[&SessionView], now_ms: i64) {
     if sessions.is_empty() {
         let block = Block::default()
             .borders(Borders::ALL)
@@ -149,10 +187,9 @@ fn draw_sessions(frame: &mut Frame, area: Rect, sessions: &[SessionView], now_ms
     }
 }
 
-/// One **Session** panel: titled `project · model · id`, showing that session's
-/// per-**Session** **Throughput** as a rolling 60s tokens/min rate plus a braille
-/// sparkline. (Every **Session** in the store renders as an **Active Session**
-/// until slice 04 adds lifecycle to split active from **Session History**.)
+/// One **Active Session** panel: titled `project · model · id`, showing that
+/// session's per-**Session** **Throughput** as a rolling 60s tokens/min rate plus
+/// a braille sparkline.
 fn draw_session_panel(frame: &mut Frame, area: Rect, view: &SessionView, now_ms: i64) {
     // The Model is the newest reading's model (Throughput breaks down per Model;
     // the active turn's model is the freshest one captured).
@@ -221,6 +258,58 @@ fn draw_session_panel(frame: &mut Frame, area: Rect, view: &SessionView, now_ms:
         Style::default().fg(Color::Cyan),
     )));
     frame.render_widget(spark, rows[1]);
+}
+
+/// The **Session History** view: the last 10 ended **Session**s, each rendered as
+/// one row `project · model · total tokens · duration · ended (relative)`. The
+/// rows are already classified, summarised, and ordered (most recent first) by
+/// the [`lifecycle`] classifier — this just formats them.
+fn draw_history(frame: &mut Frame, area: Rect, history: &[EndedSession], now_ms: i64) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Session History ");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if history.is_empty() {
+        let msg = Paragraph::new("No ended Sessions yet.")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(msg, inner);
+        return;
+    }
+
+    let lines: Vec<Line> = history.iter().map(|e| history_row(e, now_ms)).collect();
+    let para = Paragraph::new(lines);
+    frame.render_widget(para, inner);
+}
+
+/// Format one **Session History** row from an [`EndedSession`]:
+/// `project · model · <total> tok · <duration> · ended <relative>`. The relative
+/// "ended Xm ago" is measured against `now_ms` (epoch milliseconds).
+fn history_row(ended: &EndedSession, now_ms: i64) -> Line<'static> {
+    // `summarize` already substitutes "—" for an absent project/model, so the
+    // fields can be rendered directly — the placeholder lives in one place.
+    let sep = Span::styled(" · ", Style::default().fg(Color::DarkGray));
+    Line::from(vec![
+        Span::styled(ended.project.clone(), Style::default().add_modifier(Modifier::BOLD)),
+        sep.clone(),
+        Span::styled(ended.model.clone(), Style::default().fg(Color::Cyan)),
+        sep.clone(),
+        Span::styled(
+            format!("{} tok", ended.total_tokens),
+            Style::default().fg(Color::Gray),
+        ),
+        sep.clone(),
+        Span::styled(
+            lifecycle::format_duration(ended.duration_ms),
+            Style::default().fg(Color::Gray),
+        ),
+        sep,
+        Span::styled(
+            format!("ended {}", lifecycle::format_ended_ago(ended.ended_ms, now_ms)),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ])
 }
 
 /// Render a [`RollingRate`]'s per-bucket token sums as a braille sparkline — one

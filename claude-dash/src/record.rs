@@ -2,10 +2,12 @@
 //!
 //! The store is append-only JSONL, one file per **Session**, at
 //! `~/.cca/sessions/<id>.jsonl`. Records are tagged with a record-type field
-//! `"t"` so record types (`start`/`req`, plus `end` in later slices) coexist in
-//! the same file. This slice defines the `start` record (`cca` writes one when it
-//! launches a **Session**) and the `req` record (the **Proxy** appends one per
-//! `/v1/messages` response).
+//! `"t"` so record types (`start`/`req`/`end`) coexist in the same file. The
+//! `start` record is written by `cca` when it launches a **Session**, the `req`
+//! record is appended by the **Proxy** per `/v1/messages` response, and the
+//! `end` record is written by `cca` when `claude` exits — its `ts` is the
+//! **Session**'s end time, used to move it from the active box to **Session
+//! History**.
 
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +30,11 @@ pub enum Record {
     /// account-wide **Budget** reading captured from the response headers.
     #[serde(rename = "req")]
     Req(ReqRecord),
+    /// The closing record of a **Session**, written by `cca` when `claude`
+    /// exits. Its `ts` is the **Session**'s end time — the signal that moves the
+    /// **Session** out of the active box and into **Session History**.
+    #[serde(rename = "end")]
+    End(EndRecord),
 }
 
 impl Record {
@@ -37,7 +44,7 @@ impl Record {
     pub fn as_req(&self) -> Option<&ReqRecord> {
         match self {
             Record::Req(req) => Some(req),
-            Record::Start(_) => None,
+            Record::Start(_) | Record::End(_) => None,
         }
     }
 
@@ -47,7 +54,17 @@ impl Record {
     pub fn as_start(&self) -> Option<&StartRecord> {
         match self {
             Record::Start(start) => Some(start),
-            Record::Req(_) => None,
+            Record::Req(_) | Record::End(_) => None,
+        }
+    }
+
+    /// Borrow the inner [`EndRecord`] if this is an `end` record. Lets the
+    /// lifecycle classifier see that a **Session** ended (so it belongs in
+    /// **Session History**) without matching the variant by hand.
+    pub fn as_end(&self) -> Option<&EndRecord> {
+        match self {
+            Record::End(end) => Some(end),
+            Record::Start(_) | Record::Req(_) => None,
         }
     }
 }
@@ -69,6 +86,19 @@ pub struct StartRecord {
     pub cwd: String,
     /// The launching process id (the **Session**'s liveness handle for slice 04).
     pub pid: i32,
+}
+
+/// An `end` record: `cca` writes one per **Session** when `claude` exits. It is
+/// deliberately minimal — the `id` ties it to the **Session** and `ts` is the
+/// **Session**'s end time, the key field the lifecycle classifier reads to move
+/// the **Session** into **Session History** and to compute its duration and
+/// "ended Xm ago" label.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EndRecord {
+    /// The **Session** id (matches the JSONL file stem `<id>.jsonl`).
+    pub id: String,
+    /// End time, epoch milliseconds — when `claude` exited.
+    pub ts: i64,
 }
 
 /// A `req` record: a timestamped reading the **Proxy** captured from one
@@ -244,5 +274,39 @@ mod tests {
     fn as_req_is_none_for_a_start_record() {
         let rec = Record::Start(sample_start());
         assert!(rec.as_req().is_none());
+    }
+
+    fn sample_end() -> EndRecord {
+        EndRecord {
+            id: "a1b2c3d4".to_string(),
+            ts: 1_750_000_900_000,
+        }
+    }
+
+    #[test]
+    fn end_record_serializes_with_type_tag_and_fields() {
+        let rec = Record::End(sample_end());
+        let json = serde_json::to_string(&rec).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(value["t"], "end");
+        assert_eq!(value["id"], "a1b2c3d4");
+        assert_eq!(value["ts"], 1_750_000_900_000_i64);
+    }
+
+    #[test]
+    fn end_record_round_trips() {
+        let original = Record::End(sample_end());
+        let json = serde_json::to_string(&original).unwrap();
+        let parsed: Record = serde_json::from_str(&json).unwrap();
+        assert_eq!(original, parsed);
+        assert_eq!(parsed.as_end(), Some(&sample_end()));
+    }
+
+    #[test]
+    fn as_req_and_as_start_are_none_for_an_end_record() {
+        let rec = Record::End(sample_end());
+        assert!(rec.as_req().is_none());
+        assert!(rec.as_start().is_none());
     }
 }
