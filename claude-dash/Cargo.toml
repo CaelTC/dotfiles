@@ -1,0 +1,46 @@
+[package]
+name = "claude-dash"
+version = "0.1.0"
+edition = "2021"
+description = "A live terminal dashboard for watching Claude subscription Usage (Budget + Throughput) across concurrent Sessions"
+
+[[bin]]
+name = "claude-dash"
+path = "src/main.rs"
+
+[dependencies]
+# CLI arg parsing — `claude-dash` (TUI) vs `claude-dash proxy`
+clap = { version = "4", features = ["derive"] }
+
+# Async runtime + streaming reverse-proxy
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.7", features = ["http2"] }
+hyper = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls"] }
+http-body-util = "0.1"
+bytes = "1"
+futures-util = "0.3"
+
+# Records / store
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Time / ids
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+uuid = { version = "1", features = ["v4"] }
+
+# TUI
+ratatui = "0.28"
+crossterm = "0.28"
+
+# File-watching the session store directory
+notify = "6"
+glob = "0.3"
+
+# Home dir resolution
+dirs = "5"
+
+anyhow = "1"
+
+[dev-dependencies]
+tempfile = "3"
