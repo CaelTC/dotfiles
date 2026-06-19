@@ -10,6 +10,7 @@ mod budget;
 mod proxy;
 mod record;
 mod store;
+mod throughput;
 mod tui;
 
 use std::net::SocketAddr;

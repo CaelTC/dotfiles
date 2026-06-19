@@ -1,6 +1,6 @@
 # Per-session throughput
 
-Status: ready-for-agent
+Status: done
 
 ## What to build
 

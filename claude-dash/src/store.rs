@@ -55,6 +55,16 @@ pub fn read_records(path: &Path) -> Vec<Record> {
         .collect()
 }
 
+/// List the session files in the store: `~/.cca/sessions/*.jsonl`. Both readers
+/// start here; they differ only in how they select across the files.
+fn session_files(dir: &Path) -> Vec<PathBuf> {
+    let pattern = dir.join("*.jsonl");
+    match glob::glob(&pattern.to_string_lossy()) {
+        Ok(paths) => paths.filter_map(|p| p.ok()).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
 /// Pick the newest `req` record across many records — the freshest **Budget**
 /// reading wins, since **Budget** is account-wide and any **Session**'s latest
 /// reading reflects the whole subscription.
@@ -74,16 +84,41 @@ where
 /// Glob `~/.cca/sessions/*.jsonl`, read every file, and return the newest `req`
 /// record across all of them (account-wide newest **Budget**).
 pub fn newest_req_in_dir(dir: &Path) -> Option<ReqRecord> {
-    let pattern = dir.join("*.jsonl");
-    let pattern = pattern.to_string_lossy();
-
-    let all: Vec<Record> = glob::glob(&pattern)
-        .ok()?
-        .filter_map(|p| p.ok())
-        .flat_map(|p| read_records(&p))
+    let all: Vec<Record> = session_files(dir)
+        .iter()
+        .flat_map(|p| read_records(p))
         .collect();
 
     newest_req(&all).cloned()
+}
+
+/// Read the `req` records from the **Active Session** — the session file with the
+/// freshest `req` — for the rolling-window **Throughput** rate.
+///
+/// **Throughput** is per-**Session** (unlike account-wide **Budget**), so the
+/// rate must come from a single session's records, not all files mixed together.
+/// This slice has effectively one session file; we pick the one carrying the
+/// newest `req` and return *its* `req` records in file (append) order so the
+/// caller can window them by `ts`.
+pub fn active_session_reqs_in_dir(dir: &Path) -> Vec<ReqRecord> {
+    // Per file, collect its `req` records and note its newest `ts`. The Active
+    // Session is the file whose newest `req` is the freshest overall.
+    let mut active: Vec<ReqRecord> = Vec::new();
+    let mut active_newest_ts = i64::MIN;
+    for path in session_files(dir) {
+        let reqs: Vec<ReqRecord> = read_records(&path)
+            .into_iter()
+            .filter_map(|r| r.as_req().cloned())
+            .collect();
+        let Some(file_newest) = reqs.iter().map(|r| r.ts).max() else {
+            continue;
+        };
+        if file_newest > active_newest_ts {
+            active_newest_ts = file_newest;
+            active = reqs;
+        }
+    }
+    active
 }
 
 #[cfg(test)]
@@ -102,6 +137,7 @@ mod tests {
                 status: "allowed".to_string(),
             },
             ts,
+            None,
         ))
     }
 
@@ -135,6 +171,33 @@ mod tests {
         let newest = newest_req_in_dir(dir.path()).expect("a req exists");
         assert_eq!(newest.ts, 400);
         assert_eq!(newest.budget.b5_util, 0.4);
+    }
+
+    #[test]
+    fn active_session_reqs_picks_the_freshest_file_and_returns_its_reqs() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Session A: two reqs, but stale relative to B.
+        let a = session_path(dir.path(), "aaaa");
+        append_record(&a, &req(100, 0.1)).unwrap();
+        append_record(&a, &req(200, 0.2)).unwrap();
+
+        // Session B: the Active Session (freshest req).
+        let b = session_path(dir.path(), "bbbb");
+        append_record(&b, &req(300, 0.3)).unwrap();
+        append_record(&b, &req(400, 0.4)).unwrap();
+
+        let reqs = active_session_reqs_in_dir(dir.path());
+        // Only Session B's reqs, in append order.
+        assert_eq!(reqs.len(), 2);
+        assert_eq!(reqs[0].ts, 300);
+        assert_eq!(reqs[1].ts, 400);
+    }
+
+    #[test]
+    fn active_session_reqs_is_empty_when_no_files() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(active_session_reqs_in_dir(dir.path()).is_empty());
     }
 
     #[test]

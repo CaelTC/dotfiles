@@ -1,9 +1,14 @@
 //! The `claude-dash` TUI — a read-only dashboard.
 //!
-//! This slice renders the **Budget left rail**: the 5-hour and 7-day **Rolling
-//! Window**s with **Utilization** as a percentage and a live countdown to each
-//! reset. **Budget** is the newest `req` across all session files (account-wide,
-//! so the freshest reading wins).
+//! This slice renders the **Budget left rail** and an **Active Session** panel:
+//! - The left rail shows the 5-hour and 7-day **Rolling Window**s with
+//!   **Utilization** as a percentage and a live countdown to each reset.
+//!   **Budget** is the newest `req` across all session files (account-wide, so
+//!   the freshest reading wins).
+//! - The **Active Session** panel shows the session's **Model** and its
+//!   per-**Session** **Throughput** as a rolling 60s tokens/min rate plus a
+//!   braille sparkline, windowed (not instantaneous) so bursty per-request data
+//!   reads smoothly.
 //!
 //! Liveness comes from two sources: a `notify` file-watch on the store
 //! directory, and a ~1s tick so countdowns advance and new records appear within
@@ -26,6 +31,7 @@ use ratatui::{Frame, Terminal};
 
 use crate::record::ReqRecord;
 use crate::store;
+use crate::throughput::{self, RollingRate};
 
 /// How often the dashboard ticks so countdowns advance and freshly-appended
 /// records are reflected within ~1s.
@@ -64,9 +70,11 @@ fn event_loop<B: ratatui::backend::Backend>(
     watch_rx: &Receiver<notify::Result<notify::Event>>,
 ) -> Result<()> {
     let mut budget = store::newest_req_in_dir(dir);
+    let mut active_reqs = store::active_session_reqs_in_dir(dir);
     loop {
         let now = chrono::Utc::now().timestamp();
-        terminal.draw(|f| draw(f, budget.as_ref(), now))?;
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        terminal.draw(|f| draw(f, budget.as_ref(), &active_reqs, now, now_ms))?;
 
         // Wait up to one tick for a keypress; the tick itself advances the
         // countdown.
@@ -88,18 +96,114 @@ fn event_loop<B: ratatui::backend::Backend>(
         }
         if changed {
             budget = store::newest_req_in_dir(dir);
+            active_reqs = store::active_session_reqs_in_dir(dir);
         }
     }
 }
 
-/// Draw the **Budget left rail**.
-fn draw(frame: &mut Frame, budget: Option<&ReqRecord>, now_epoch: i64) {
+/// Draw the **Budget left rail** and the **Active Session** panel.
+fn draw(
+    frame: &mut Frame,
+    budget: Option<&ReqRecord>,
+    active_reqs: &[ReqRecord],
+    now_epoch: i64,
+    now_ms: i64,
+) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(40), Constraint::Min(0)])
         .split(frame.area());
 
     draw_budget_rail(frame, chunks[0], budget, now_epoch);
+    draw_active_session(frame, chunks[1], active_reqs, now_ms);
+}
+
+/// The **Active Session** panel: the session's **Model** and its per-**Session**
+/// **Throughput** as a rolling 60s tokens/min rate plus a braille sparkline.
+fn draw_active_session(frame: &mut Frame, area: Rect, active_reqs: &[ReqRecord], now_ms: i64) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Active Session ");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // The Throughput samples: each `req` carrying a Throughput reading is one
+    // (ts, total-tokens) point for the rolling window.
+    let samples: Vec<(i64, u64)> = active_reqs
+        .iter()
+        .filter_map(|r| r.throughput.as_ref().map(|tp| (r.ts, tp.total())))
+        .collect();
+
+    if samples.is_empty() {
+        let msg = Paragraph::new("No Throughput yet.\nWaiting for a request…")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(msg, inner);
+        return;
+    }
+
+    // The Model is the newest reading's model (Throughput breaks down per Model;
+    // the active turn's model is the freshest one captured).
+    let model = active_reqs
+        .iter()
+        .rev()
+        .find_map(|r| r.throughput.as_ref())
+        .map(|tp| tp.model.as_str())
+        .filter(|m| !m.is_empty())
+        .unwrap_or("—");
+
+    let rate = throughput::rolling_rate(samples, now_ms);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // model
+            Constraint::Length(1), // rate
+            Constraint::Length(1), // sparkline
+            Constraint::Min(0),
+        ])
+        .split(inner);
+
+    let model_line = Paragraph::new(Line::from(vec![
+        Span::styled("model: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(model, Style::default().add_modifier(Modifier::BOLD)),
+    ]));
+    frame.render_widget(model_line, rows[0]);
+
+    let rate_line = Paragraph::new(Line::from(vec![
+        Span::styled(
+            format!("{} ", rate.tokens_per_min),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("tok/min (60s)", Style::default().fg(Color::DarkGray)),
+    ]));
+    frame.render_widget(rate_line, rows[1]);
+
+    let spark = Paragraph::new(Line::from(Span::styled(
+        braille_sparkline(&rate),
+        Style::default().fg(Color::Cyan),
+    )));
+    frame.render_widget(spark, rows[2]);
+}
+
+/// Render a [`RollingRate`]'s per-bucket token sums as a braille sparkline — one
+/// braille block per bucket, scaled to the busiest bucket so the bars show the
+/// *shape* of recent **Throughput** rather than absolute height.
+fn braille_sparkline(rate: &RollingRate) -> String {
+    // Braille bar glyphs from empty to full (8 levels).
+    const BARS: [char; 8] = ['⡀', '⡄', '⡆', '⡇', '⣇', '⣧', '⣷', '⣿'];
+    let max = rate.buckets.iter().copied().max().unwrap_or(0);
+    if max == 0 {
+        return BARS[0].to_string().repeat(rate.buckets.len());
+    }
+    rate.buckets
+        .iter()
+        .map(|&b| {
+            let level = ((b as f64 / max as f64) * (BARS.len() - 1) as f64).round() as usize;
+            BARS[level.min(BARS.len() - 1)]
+        })
+        .collect()
 }
 
 /// The left rail: 5h and 7d **Rolling Window** gauges with % **Utilization** and
@@ -241,6 +345,37 @@ mod tests {
     fn countdown_is_now_when_elapsed() {
         assert_eq!(format_countdown(0), "now");
         assert_eq!(format_countdown(-5), "now");
+    }
+
+    #[test]
+    fn braille_sparkline_has_one_glyph_per_bucket() {
+        let rate = RollingRate {
+            tokens_per_min: 100,
+            buckets: vec![0, 5, 10, 0],
+        };
+        let spark = braille_sparkline(&rate);
+        assert_eq!(spark.chars().count(), 4);
+    }
+
+    #[test]
+    fn braille_sparkline_scales_busiest_bucket_to_full() {
+        let rate = RollingRate {
+            tokens_per_min: 100,
+            buckets: vec![0, 100],
+        };
+        let spark: Vec<char> = braille_sparkline(&rate).chars().collect();
+        // The busiest bucket renders as the fullest glyph.
+        assert_eq!(spark[1], '⣿');
+    }
+
+    #[test]
+    fn braille_sparkline_all_zero_is_flat() {
+        let rate = RollingRate {
+            tokens_per_min: 0,
+            buckets: vec![0, 0, 0],
+        };
+        let spark = braille_sparkline(&rate);
+        assert_eq!(spark.chars().count(), 3);
     }
 
     #[test]

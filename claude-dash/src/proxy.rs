@@ -20,11 +20,13 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
 use axum::routing::any;
 use axum::Router;
-use futures_util::TryStreamExt;
+use bytes::Bytes;
+use futures_util::{StreamExt, TryStreamExt};
 
 use crate::budget::Budget;
 use crate::record::{Record, ReqRecord};
 use crate::store;
+use crate::throughput;
 
 /// The inference base every request is forwarded to. Only inference is
 /// redirected through the **Proxy**.
@@ -115,27 +117,42 @@ async fn handle(State(state): State<ProxyState>, req: Request) -> Result<Respons
     let headers = upstream_resp.headers().clone();
 
     // --- Capture Budget from the response HEAD, before touching the body. ---
-    // For a /v1/messages response, read the unified rate-limit headers and
-    // append a `req` record. Header access does not consume the body stream.
-    if is_messages {
-        if let Some(budget) = budget_from_headers(&headers) {
-            let ts = chrono::Utc::now().timestamp_millis();
-            let record = Record::Req(ReqRecord::from_budget(&budget, ts));
-            let session_file = state.session_file.clone();
-            // Capture is fire-and-forget and must never block the relay path or
-            // a runtime worker — do the blocking file append on the blocking
-            // pool, and never fail the client request over a capture problem.
-            tokio::task::spawn_blocking(move || {
-                if let Err(e) = store::append_record(&session_file, &record) {
-                    eprintln!("claude-dash proxy: failed to append req record: {e:#}");
-                }
-            });
-        }
-    }
+    // For a /v1/messages response, read the unified rate-limit headers. Header
+    // access does not consume the body stream. We hold the Budget reading and
+    // append the combined `req` record only once the teed body completes (so the
+    // record carries the per-Session Throughput too), but the *Budget* itself is
+    // already known here.
+    let budget = is_messages.then(|| budget_from_headers(&headers)).flatten();
 
-    // --- Relay the response body, streamed and untouched. ---
+    // --- Relay the response body, teed, streamed, and untouched. ---
     let body_stream = upstream_resp.bytes_stream();
-    let relay_body = Body::from_stream(body_stream);
+
+    let relay_body = if is_messages {
+        // Tee the body: every chunk is forwarded to the client *immediately* as
+        // it arrives, and a copy is sent down a side channel to be parsed for
+        // `usage`. The tee never awaits the parser before forwarding, so client
+        // (token-by-token) streaming is never delayed or buffered. `Bytes` is
+        // cheap to clone (refcounted), so teeing adds no copy of the payload.
+        let (tee_tx, tee_rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
+
+        // The side task drains the teed copy off the relay hot path, reassembles
+        // the body, parses Throughput at end-of-stream, and appends the combined
+        // `req` record — keeping the blocking file write on the blocking pool.
+        let session_file = state.session_file.clone();
+        tokio::spawn(capture_throughput(tee_rx, budget, session_file));
+
+        let teed = body_stream.map(move |chunk| {
+            if let Ok(bytes) = &chunk {
+                // Best-effort tee: if the side task has gone away the send fails
+                // and we simply stop capturing — relay continues unaffected.
+                let _ = tee_tx.send(bytes.clone());
+            }
+            chunk
+        });
+        Body::from_stream(teed)
+    } else {
+        Body::from_stream(body_stream)
+    };
 
     let mut response = Response::builder()
         .status(reqwest_status_to_axum(status))
@@ -144,6 +161,44 @@ async fn handle(State(state): State<ProxyState>, req: Request) -> Result<Respons
 
     copy_response_headers(&headers, response.headers_mut());
     Ok(response)
+}
+
+/// Drain the teed copy of a `/v1/messages` response body, parse the
+/// per-**Session** **Throughput** out of the (reassembled) SSE stream, and append
+/// the combined `req` record carrying both **Budget** and **Throughput**.
+///
+/// Runs as a side task off the relay hot path: client chunks are forwarded the
+/// instant they arrive, while this accumulates the teed copy and only writes the
+/// record once the stream ends (when `usage.output_tokens` is final). The blocking
+/// file append is kept on the blocking pool, and a capture problem never affects
+/// the client request.
+async fn capture_throughput(
+    mut tee_rx: tokio::sync::mpsc::UnboundedReceiver<Bytes>,
+    budget: Option<Budget>,
+    session_file: PathBuf,
+) {
+    let mut body: Vec<u8> = Vec::new();
+    while let Some(chunk) = tee_rx.recv().await {
+        body.extend_from_slice(&chunk);
+    }
+
+    let throughput = throughput::parse_usage(&body);
+
+    // Budget is the record's spine (it embeds a Budget); with no Budget reading
+    // there's no `req` record to write this slice. Throughput still rode the tee
+    // for free and attaches as soon as a Budget reading is present.
+    let Some(budget) = budget else {
+        return;
+    };
+
+    let ts = chrono::Utc::now().timestamp_millis();
+    let record = Record::Req(ReqRecord::from_budget(&budget, ts, throughput));
+
+    tokio::task::spawn_blocking(move || {
+        if let Err(e) = store::append_record(&session_file, &record) {
+            eprintln!("claude-dash proxy: failed to append req record: {e:#}");
+        }
+    });
 }
 
 /// Read a [`Budget`] from a reqwest [`HeaderMap`] using the unified rate-limit
