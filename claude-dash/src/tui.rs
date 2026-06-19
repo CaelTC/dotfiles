@@ -245,7 +245,7 @@ fn draw_session_panel(frame: &mut Frame, area: Rect, view: &SessionView, now_ms:
 
     let rate_line = Paragraph::new(Line::from(vec![
         Span::styled(
-            format!("{} ", rate.tokens_per_min),
+            format!("{} ", humanize_tokens(rate.tokens_per_min)),
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
@@ -297,7 +297,7 @@ fn history_row(ended: &EndedSession, now_ms: i64) -> Line<'static> {
         Span::styled(ended.model.clone(), Style::default().fg(Color::Cyan)),
         sep.clone(),
         Span::styled(
-            format!("{} tok", ended.total_tokens),
+            format!("{} tok", humanize_tokens(ended.total_tokens)),
             Style::default().fg(Color::Gray),
         ),
         sep.clone(),
@@ -475,6 +475,27 @@ fn severity_color(severity: budget::Severity) -> Color {
     }
 }
 
+/// Humanize a token count into a compact form: `< 1000` stays exact, then `1.2k`,
+/// `100k`, `1.2M`. The fractional digit is dropped once the leading number reaches
+/// three figures (`100k`, not `100.0k`) so the width stays stable.
+fn humanize_tokens(n: u64) -> String {
+    fn scale(n: u64, divisor: f64, suffix: char) -> String {
+        let v = n as f64 / divisor;
+        if v >= 100.0 {
+            format!("{}{suffix}", v.round() as u64)
+        } else {
+            format!("{v:.1}{suffix}")
+        }
+    }
+    if n < 1_000 {
+        n.to_string()
+    } else if n < 1_000_000 {
+        scale(n, 1_000.0, 'k')
+    } else {
+        scale(n, 1_000_000.0, 'M')
+    }
+}
+
 /// Format a countdown of `secs` seconds as `HHh MMm SSs` (or `Dd HHh` for long
 /// 7-day windows). Returns `now` once the reset has passed.
 fn format_countdown(secs: i64) -> String {
@@ -563,6 +584,16 @@ mod tests {
         };
         let spark = braille_sparkline(&rate);
         assert_eq!(spark.chars().count(), 3);
+    }
+
+    #[test]
+    fn humanize_tokens_scales_by_magnitude() {
+        assert_eq!(humanize_tokens(0), "0");
+        assert_eq!(humanize_tokens(999), "999");
+        assert_eq!(humanize_tokens(1_200), "1.2k");
+        assert_eq!(humanize_tokens(100_000), "100k");
+        assert_eq!(humanize_tokens(1_200_000), "1.2M");
+        assert_eq!(humanize_tokens(1_000_000), "1.0M");
     }
 
     #[test]
