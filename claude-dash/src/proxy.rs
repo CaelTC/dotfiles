@@ -128,9 +128,18 @@ async fn handle(State(state): State<ProxyState>, req: Request) -> Result<Respons
         .request(parts.method.clone(), &upstream_url)
         .body(reqwest_body);
 
-    // Forward request headers untouched, except the Host (must match upstream).
+    // Forward request headers untouched, except the Host (must match upstream)
+    // and Accept-Encoding. We force `identity` so upstream returns an unencoded
+    // body: the Throughput tee parses `usage` out of the response bytes directly,
+    // and a compressed (gzip/zstd/br) body would carry no literal `usage` string,
+    // silently yielding zero Throughput. The relayed body stays untouched — it is
+    // simply identity-encoded — and the client decodes identity transparently.
     let mut fwd_headers = parts.headers.clone();
     fwd_headers.remove(axum::http::header::HOST);
+    fwd_headers.insert(
+        axum::http::header::ACCEPT_ENCODING,
+        HeaderValue::from_static("identity"),
+    );
     upstream_req = upstream_req.headers(fwd_headers);
 
     let upstream_resp = upstream_req.send().await.map_err(ProxyError::Upstream)?;
