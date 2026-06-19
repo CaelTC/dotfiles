@@ -114,6 +114,10 @@ else
   cargo install --path "$DOTFILES_DIR/wt" --quiet
 fi
 
+# ── Bash ─────────────────────────────────────────────────────────────────────
+symlink "$DOTFILES_DIR/bash/.bashrc" "$HOME/.bashrc"
+symlink "$DOTFILES_DIR/bash/.bash_profile" "$HOME/.bash_profile"
+
 # ── Zsh ──────────────────────────────────────────────────────────────────────
 symlink "$DOTFILES_DIR/zsh/.zshrc" "$HOME/.zshrc"
 
