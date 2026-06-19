@@ -1,14 +1,15 @@
 //! The `claude-dash` TUI — a read-only dashboard.
 //!
-//! This slice renders the **Budget left rail** and an **Active Session** panel:
+//! This slice renders the **Budget left rail** and N concurrent **Active
+//! Session** panels:
 //! - The left rail shows the 5-hour and 7-day **Rolling Window**s with
 //!   **Utilization** as a percentage and a live countdown to each reset.
 //!   **Budget** is the newest `req` across all session files (account-wide, so
 //!   the freshest reading wins).
-//! - The **Active Session** panel shows the session's **Model** and its
-//!   per-**Session** **Throughput** as a rolling 60s tokens/min rate plus a
-//!   braille sparkline, windowed (not instantaneous) so bursty per-request data
-//!   reads smoothly.
+//! - Each **Active Session** panel — one per **Session** present in the store —
+//!   is labelled `project · model · id` and shows that session's per-**Session**
+//!   **Throughput** as a rolling 60s tokens/min rate plus a braille sparkline,
+//!   windowed (not instantaneous) so bursty per-request data reads smoothly.
 //!
 //! Liveness comes from two sources: a `notify` file-watch on the store
 //! directory, and a ~1s tick so countdowns advance and new records appear within
@@ -30,7 +31,7 @@ use ratatui::widgets::{Block, Borders, Gauge, Paragraph};
 use ratatui::{Frame, Terminal};
 
 use crate::record::ReqRecord;
-use crate::store;
+use crate::store::{self, SessionView};
 use crate::throughput::{self, RollingRate};
 
 /// How often the dashboard ticks so countdowns advance and freshly-appended
@@ -69,12 +70,14 @@ fn event_loop<B: ratatui::backend::Backend>(
     dir: &Path,
     watch_rx: &Receiver<notify::Result<notify::Event>>,
 ) -> Result<()> {
-    let mut budget = store::newest_req_in_dir(dir);
-    let mut active_reqs = store::active_session_reqs_in_dir(dir);
+    // One read of the store yields the per-Session grouping primitive; both the
+    // account-wide Budget and the N session panels are thin selections over it.
+    let mut sessions = store::session_views_in_dir(dir);
+    let mut budget = store::newest_req_in_views(&sessions).cloned();
     loop {
         let now = chrono::Utc::now().timestamp();
         let now_ms = chrono::Utc::now().timestamp_millis();
-        terminal.draw(|f| draw(f, budget.as_ref(), &active_reqs, now, now_ms))?;
+        terminal.draw(|f| draw(f, budget.as_ref(), &sessions, now, now_ms))?;
 
         // Wait up to one tick for a keypress; the tick itself advances the
         // countdown.
@@ -95,17 +98,17 @@ fn event_loop<B: ratatui::backend::Backend>(
             changed = true;
         }
         if changed {
-            budget = store::newest_req_in_dir(dir);
-            active_reqs = store::active_session_reqs_in_dir(dir);
+            sessions = store::session_views_in_dir(dir);
+            budget = store::newest_req_in_views(&sessions).cloned();
         }
     }
 }
 
-/// Draw the **Budget left rail** and the **Active Session** panel.
+/// Draw the **Budget left rail** and the N concurrent **Active Session** panels.
 fn draw(
     frame: &mut Frame,
     budget: Option<&ReqRecord>,
-    active_reqs: &[ReqRecord],
+    sessions: &[SessionView],
     now_epoch: i64,
     now_ms: i64,
 ) {
@@ -115,21 +118,71 @@ fn draw(
         .split(frame.area());
 
     draw_budget_rail(frame, chunks[0], budget, now_epoch);
-    draw_active_session(frame, chunks[1], active_reqs, now_ms);
+    draw_sessions(frame, chunks[1], sessions, now_ms);
 }
 
-/// The **Active Session** panel: the session's **Model** and its per-**Session**
-/// **Throughput** as a rolling 60s tokens/min rate plus a braille sparkline.
-fn draw_active_session(frame: &mut Frame, area: Rect, active_reqs: &[ReqRecord], now_ms: i64) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Active Session ");
+/// Lay the **Session**s out as a vertical stack of equal panels — one **Active
+/// Session** panel per **Session** present in the store.
+fn draw_sessions(frame: &mut Frame, area: Rect, sessions: &[SessionView], now_ms: i64) {
+    if sessions.is_empty() {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Active Sessions ");
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let msg = Paragraph::new("No Sessions yet.\nLaunch `cca` to start one…")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(msg, inner);
+        return;
+    }
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(vec![
+            Constraint::Ratio(1, sessions.len() as u32);
+            sessions.len()
+        ])
+        .split(area);
+
+    for (panel, view) in rows.iter().zip(sessions.iter()) {
+        draw_session_panel(frame, *panel, view, now_ms);
+    }
+}
+
+/// One **Session** panel: titled `project · model · id`, showing that session's
+/// per-**Session** **Throughput** as a rolling 60s tokens/min rate plus a braille
+/// sparkline. (Every **Session** in the store renders as an **Active Session**
+/// until slice 04 adds lifecycle to split active from **Session History**.)
+fn draw_session_panel(frame: &mut Frame, area: Rect, view: &SessionView, now_ms: i64) {
+    // The Model is the newest reading's model (Throughput breaks down per Model;
+    // the active turn's model is the freshest one captured).
+    let model = view
+        .reqs
+        .iter()
+        .rev()
+        .find_map(|r| r.throughput.as_ref())
+        .map(|tp| tp.model.as_str())
+        .filter(|m| !m.is_empty())
+        .unwrap_or("—");
+
+    // The panel label is `project · model · id` — project from the `start`
+    // record, model from the freshest Throughput, id is the Session id.
+    let project = view
+        .start
+        .as_ref()
+        .map(|s| s.project.as_str())
+        .filter(|p| !p.is_empty())
+        .unwrap_or("—");
+    let title = format!(" {project} · {model} · {} ", view.id);
+
+    let block = Block::default().borders(Borders::ALL).title(title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
     // The Throughput samples: each `req` carrying a Throughput reading is one
     // (ts, total-tokens) point for the rolling window.
-    let samples: Vec<(i64, u64)> = active_reqs
+    let samples: Vec<(i64, u64)> = view
+        .reqs
         .iter()
         .filter_map(|r| r.throughput.as_ref().map(|tp| (r.ts, tp.total())))
         .collect();
@@ -141,33 +194,16 @@ fn draw_active_session(frame: &mut Frame, area: Rect, active_reqs: &[ReqRecord],
         return;
     }
 
-    // The Model is the newest reading's model (Throughput breaks down per Model;
-    // the active turn's model is the freshest one captured).
-    let model = active_reqs
-        .iter()
-        .rev()
-        .find_map(|r| r.throughput.as_ref())
-        .map(|tp| tp.model.as_str())
-        .filter(|m| !m.is_empty())
-        .unwrap_or("—");
-
     let rate = throughput::rolling_rate(samples, now_ms);
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // model
             Constraint::Length(1), // rate
             Constraint::Length(1), // sparkline
             Constraint::Min(0),
         ])
         .split(inner);
-
-    let model_line = Paragraph::new(Line::from(vec![
-        Span::styled("model: ", Style::default().fg(Color::DarkGray)),
-        Span::styled(model, Style::default().add_modifier(Modifier::BOLD)),
-    ]));
-    frame.render_widget(model_line, rows[0]);
 
     let rate_line = Paragraph::new(Line::from(vec![
         Span::styled(
@@ -178,13 +214,13 @@ fn draw_active_session(frame: &mut Frame, area: Rect, active_reqs: &[ReqRecord],
         ),
         Span::styled("tok/min (60s)", Style::default().fg(Color::DarkGray)),
     ]));
-    frame.render_widget(rate_line, rows[1]);
+    frame.render_widget(rate_line, rows[0]);
 
     let spark = Paragraph::new(Line::from(Span::styled(
         braille_sparkline(&rate),
         Style::default().fg(Color::Cyan),
     )));
-    frame.render_widget(spark, rows[2]);
+    frame.render_widget(spark, rows[1]);
 }
 
 /// Render a [`RollingRate`]'s per-bucket token sums as a braille sparkline — one

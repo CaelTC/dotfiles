@@ -1,0 +1,79 @@
+#!/usr/bin/env zsh
+# cca — the thin wrapper that launches `claude` behind a per-Session capture Proxy.
+#
+# Evolved from the `claude --permission auto` alias. Per invocation cca:
+#   1. mints a short Session id,
+#   2. picks a free localhost port and starts `claude-dash proxy` on it for that id,
+#   3. writes the Session's `start` record (via `claude-dash record-start`, so the
+#      JSONL schema stays owned by the Rust code),
+#   4. exports ANTHROPIC_BASE_URL at the Proxy,
+#   5. runs `claude --permission auto "$@"`, passing through all args.
+#
+# Install: build the binary (`cargo build --release`) and put both `claude-dash`
+# and this script on PATH, e.g.
+#   ln -s "$PWD/target/release/claude-dash" ~/.local/bin/claude-dash
+#   ln -s "$PWD/bin/cca"                     ~/.local/bin/cca
+# Then launch Claude Code with `cca` in place of `claude` (alias claude=cca if you
+# like). cca finds `claude-dash` via $CLAUDE_DASH_BIN or PATH.
+#
+# Note: fail-open health-checking (slice 05) is intentionally NOT here yet.
+
+emulate -L zsh
+set -u
+
+# The capture binary. Overridable for dev (point at target/{debug,release}).
+local dash="${CLAUDE_DASH_BIN:-claude-dash}"
+
+# 1. Mint a short, filename-safe, human-labelable Session id (first 8 hex of a uuid).
+local id
+id="$(uuidgen | tr 'A-Z' 'a-z' | tr -d '-')"
+id="${id[1,8]}"
+
+# 2. Pick a free localhost port. Bind port 0 in a throwaway socket and read back
+#    the port the OS assigned — the small TOCTOU window before the proxy rebinds
+#    it is acceptable for a single-user dev tool (and slice 05 adds fail-open).
+local port
+port="$(
+  python3 - <<'PY' 2>/dev/null
+import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()
+PY
+)"
+if [[ -z "$port" ]]; then
+  print -u2 "cca: could not pick a free port; launching claude without capture"
+  exec claude --permission auto "$@"
+fi
+
+local base_url="http://127.0.0.1:${port}"
+local cwd="$PWD"
+local project="${PWD:t}"   # zsh: basename of cwd
+
+# 3. Start the per-Session Proxy in the background on the chosen port.
+"$dash" proxy --addr "127.0.0.1:${port}" --id "$id" &
+local proxy_pid=$!
+
+# 4. Write the Session's `start` record. The pid we record is THIS shell's pid —
+#    the process that represents the Session for slice-04 liveness. `claude` runs
+#    as a foreground child (not `exec`'d), so this shell stays alive for exactly
+#    the Session's lifetime and its pid tracks the Session's liveness.
+"$dash" record-start \
+  --id "$id" \
+  --project "$project" \
+  --cwd "$cwd" \
+  --pid "$$" \
+  || print -u2 "cca: failed to write start record for session $id"
+
+# Tear the Proxy down when this shell exits, however claude returns. proxy_pid is
+# always set by this point (the no-port path exec'd away earlier).
+trap 'kill "$proxy_pid" 2>/dev/null' EXIT INT TERM
+
+# 5. Point inference at the Proxy.
+export ANTHROPIC_BASE_URL="$base_url"
+
+# 6. Run claude through the Proxy, passing through all args and preserving
+#    --permission auto. Not `exec` — we keep the shell alive so the EXIT trap can
+#    reap the Proxy once claude returns.
+claude --permission auto "$@"

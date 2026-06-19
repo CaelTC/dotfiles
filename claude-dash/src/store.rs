@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use crate::record::{Record, ReqRecord};
+use crate::record::{Record, ReqRecord, StartRecord};
 
 /// The store directory `~/.cca/sessions`.
 pub fn sessions_dir() -> Result<PathBuf> {
@@ -65,60 +65,84 @@ fn session_files(dir: &Path) -> Vec<PathBuf> {
     }
 }
 
-/// Pick the newest `req` record across many records — the freshest **Budget**
-/// reading wins, since **Budget** is account-wide and any **Session**'s latest
-/// reading reflects the whole subscription.
+/// One **Session**'s view of the store: its id (the JSONL file stem), its `start`
+/// record fields when present, and its `req` records in append order.
 ///
-/// Pure over an iterator of records so it's testable without touching the
-/// filesystem.
-pub fn newest_req<'a, I>(records: I) -> Option<&'a ReqRecord>
+/// This is the store's single per-**Session** grouping primitive. Every reader is
+/// a thin selector over a `Vec<SessionView>`: account-wide **Budget** flattens all
+/// sessions' `req`s and picks the newest; the **Active Session** panels render one
+/// per view. A later slice's History view will be a third selector over the same
+/// shape.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionView {
+    /// The **Session** id — the `<id>.jsonl` file stem.
+    pub id: String,
+    /// The **Session**'s `start` record fields (project, cwd, pid, start ts) when
+    /// it wrote one; `None` for a session whose file carries only `req`s.
+    pub start: Option<StartRecord>,
+    /// The **Session**'s `req` records, in append (file) order, so a caller can
+    /// window them by `ts` for the rolling **Throughput** rate.
+    pub reqs: Vec<ReqRecord>,
+}
+
+/// Group `(session_id, records)` streams into per-**Session** [`SessionView`]s.
+///
+/// The grouping primitive the store is built around: each input pairs a
+/// **Session** id (the file stem) with that file's records in append order. The
+/// `start` record (if any) supplies the view's identity fields; the `req`s are
+/// kept in order. Pure over its inputs — no filesystem — so it's unit-testable
+/// directly.
+pub fn group_sessions<I, S>(sessions: I) -> Vec<SessionView>
 where
-    I: IntoIterator<Item = &'a Record>,
+    I: IntoIterator<Item = (S, Vec<Record>)>,
+    S: Into<String>,
 {
-    records
+    sessions
         .into_iter()
-        .filter_map(Record::as_req)
-        .max_by_key(|req| req.ts)
+        .map(|(id, records)| {
+            let start = records.iter().find_map(|r| r.as_start().cloned());
+            let reqs = records.iter().filter_map(|r| r.as_req().cloned()).collect();
+            SessionView {
+                id: id.into(),
+                start,
+                reqs,
+            }
+        })
+        .collect()
 }
 
-/// Glob `~/.cca/sessions/*.jsonl`, read every file, and return the newest `req`
-/// record across all of them (account-wide newest **Budget**).
-pub fn newest_req_in_dir(dir: &Path) -> Option<ReqRecord> {
-    let all: Vec<Record> = session_files(dir)
-        .iter()
-        .flat_map(|p| read_records(p))
-        .collect();
-
-    newest_req(&all).cloned()
+/// Glob `~/.cca/sessions/*.jsonl` and read each file into a [`SessionView`] keyed
+/// by its file stem (the **Session** id). The thin dir-reading wrapper over the
+/// pure [`group_sessions`] primitive.
+pub fn session_views_in_dir(dir: &Path) -> Vec<SessionView> {
+    let sessions = session_files(dir).into_iter().map(|path| {
+        let id = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        (id, read_records(&path))
+    });
+    group_sessions(sessions)
 }
 
-/// Read the `req` records from the **Active Session** — the session file with the
-/// freshest `req` — for the rolling-window **Throughput** rate.
+/// Pick the newest `req` by `ts` from an iterator of [`ReqRecord`]s — the
+/// freshest **Budget** reading wins, since **Budget** is account-wide and any
+/// **Session**'s latest reading reflects the whole subscription.
 ///
-/// **Throughput** is per-**Session** (unlike account-wide **Budget**), so the
-/// rate must come from a single session's records, not all files mixed together.
-/// This slice has effectively one session file; we pick the one carrying the
-/// newest `req` and return *its* `req` records in file (append) order so the
-/// caller can window them by `ts`.
-pub fn active_session_reqs_in_dir(dir: &Path) -> Vec<ReqRecord> {
-    // Per file, collect its `req` records and note its newest `ts`. The Active
-    // Session is the file whose newest `req` is the freshest overall.
-    let mut active: Vec<ReqRecord> = Vec::new();
-    let mut active_newest_ts = i64::MIN;
-    for path in session_files(dir) {
-        let reqs: Vec<ReqRecord> = read_records(&path)
-            .into_iter()
-            .filter_map(|r| r.as_req().cloned())
-            .collect();
-        let Some(file_newest) = reqs.iter().map(|r| r.ts).max() else {
-            continue;
-        };
-        if file_newest > active_newest_ts {
-            active_newest_ts = file_newest;
-            active = reqs;
-        }
-    }
-    active
+/// Pure over its iterator so it's testable without touching the filesystem; both
+/// the in-memory and the [`SessionView`] selectors funnel through it.
+pub fn newest_req<'a, I>(reqs: I) -> Option<&'a ReqRecord>
+where
+    I: IntoIterator<Item = &'a ReqRecord>,
+{
+    reqs.into_iter().max_by_key(|req| req.ts)
+}
+
+/// The account-wide **Budget** selector: flatten every **Session**'s `req`s and
+/// take the newest by `ts`. A thin selector over [`SessionView`]s — **Budget** is
+/// account-wide, so the freshest reading across all sessions wins.
+pub fn newest_req_in_views(views: &[SessionView]) -> Option<&ReqRecord> {
+    newest_req(views.iter().flat_map(|v| v.reqs.iter()))
 }
 
 #[cfg(test)]
@@ -141,18 +165,24 @@ mod tests {
         ))
     }
 
+    /// A bare [`ReqRecord`] (not wrapped in [`Record`]) for the pure-iterator
+    /// `newest_req` tests.
+    fn req_record(ts: i64, b5: f64) -> ReqRecord {
+        req(ts, b5).as_req().unwrap().clone()
+    }
+
     #[test]
     fn newest_req_picks_highest_timestamp() {
-        let records = vec![req(100, 0.1), req(300, 0.3), req(200, 0.2)];
-        let newest = newest_req(&records).unwrap();
+        let reqs = vec![req_record(100, 0.1), req_record(300, 0.3), req_record(200, 0.2)];
+        let newest = newest_req(&reqs).unwrap();
         assert_eq!(newest.ts, 300);
         assert_eq!(newest.budget.b5_util, 0.3);
     }
 
     #[test]
     fn newest_req_is_none_when_empty() {
-        let records: Vec<Record> = vec![];
-        assert!(newest_req(&records).is_none());
+        let reqs: Vec<ReqRecord> = vec![];
+        assert!(newest_req(&reqs).is_none());
     }
 
     #[test]
@@ -168,36 +198,85 @@ mod tests {
         let b = session_path(dir.path(), "bbbb");
         append_record(&b, &req(400, 0.4)).unwrap();
 
-        let newest = newest_req_in_dir(dir.path()).expect("a req exists");
+        // Budget = newest req over the per-Session views (account-wide selector).
+        let views = session_views_in_dir(dir.path());
+        let newest = newest_req_in_views(&views).expect("a req exists");
+        assert_eq!(newest.ts, 400);
+        assert_eq!(newest.budget.b5_util, 0.4);
+    }
+
+    fn start(id: &str, project: &str, pid: i32) -> Record {
+        Record::Start(StartRecord {
+            id: id.to_string(),
+            ts: 1,
+            project: project.to_string(),
+            cwd: format!("/work/{project}"),
+            pid,
+        })
+    }
+
+    #[test]
+    fn group_sessions_carries_start_fields_and_ordered_reqs() {
+        let views = group_sessions(vec![(
+            "aaaa",
+            vec![start("aaaa", "proj-a", 11), req(100, 0.1), req(200, 0.2)],
+        )]);
+        assert_eq!(views.len(), 1);
+        let v = &views[0];
+        assert_eq!(v.id, "aaaa");
+        let s = v.start.as_ref().expect("start present");
+        assert_eq!(s.project, "proj-a");
+        assert_eq!(s.pid, 11);
+        // reqs preserved in append order.
+        assert_eq!(v.reqs.len(), 2);
+        assert_eq!(v.reqs[0].ts, 100);
+        assert_eq!(v.reqs[1].ts, 200);
+    }
+
+    #[test]
+    fn group_sessions_start_is_none_when_only_reqs() {
+        let views = group_sessions(vec![("bbbb", vec![req(300, 0.3)])]);
+        assert_eq!(views.len(), 1);
+        assert!(views[0].start.is_none());
+        assert_eq!(views[0].reqs.len(), 1);
+    }
+
+    #[test]
+    fn multiple_sessions_yield_multiple_views() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let a = session_path(dir.path(), "aaaa");
+        append_record(&a, &start("aaaa", "proj-a", 11)).unwrap();
+        append_record(&a, &req(100, 0.1)).unwrap();
+
+        let b = session_path(dir.path(), "bbbb");
+        append_record(&b, &start("bbbb", "proj-b", 22)).unwrap();
+        append_record(&b, &req(400, 0.4)).unwrap();
+
+        let mut views = session_views_in_dir(dir.path());
+        views.sort_by(|x, y| x.id.cmp(&y.id));
+        assert_eq!(views.len(), 2);
+        assert_eq!(views[0].id, "aaaa");
+        assert_eq!(views[0].start.as_ref().unwrap().project, "proj-a");
+        assert_eq!(views[1].id, "bbbb");
+        assert_eq!(views[1].start.as_ref().unwrap().project, "proj-b");
+    }
+
+    #[test]
+    fn newest_req_in_views_picks_freshest_across_sessions() {
+        let views = group_sessions(vec![
+            ("aaaa", vec![req(100, 0.1), req(250, 0.25)]),
+            ("bbbb", vec![req(400, 0.4)]),
+        ]);
+        let newest = newest_req_in_views(&views).expect("a req exists");
         assert_eq!(newest.ts, 400);
         assert_eq!(newest.budget.b5_util, 0.4);
     }
 
     #[test]
-    fn active_session_reqs_picks_the_freshest_file_and_returns_its_reqs() {
+    fn session_views_is_empty_when_no_files() {
         let dir = tempfile::tempdir().unwrap();
-
-        // Session A: two reqs, but stale relative to B.
-        let a = session_path(dir.path(), "aaaa");
-        append_record(&a, &req(100, 0.1)).unwrap();
-        append_record(&a, &req(200, 0.2)).unwrap();
-
-        // Session B: the Active Session (freshest req).
-        let b = session_path(dir.path(), "bbbb");
-        append_record(&b, &req(300, 0.3)).unwrap();
-        append_record(&b, &req(400, 0.4)).unwrap();
-
-        let reqs = active_session_reqs_in_dir(dir.path());
-        // Only Session B's reqs, in append order.
-        assert_eq!(reqs.len(), 2);
-        assert_eq!(reqs[0].ts, 300);
-        assert_eq!(reqs[1].ts, 400);
-    }
-
-    #[test]
-    fn active_session_reqs_is_empty_when_no_files() {
-        let dir = tempfile::tempdir().unwrap();
-        assert!(active_session_reqs_in_dir(dir.path()).is_empty());
+        assert!(session_views_in_dir(dir.path()).is_empty());
     }
 
     #[test]

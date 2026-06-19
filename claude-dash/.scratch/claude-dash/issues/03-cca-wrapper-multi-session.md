@@ -1,6 +1,6 @@
 # cca wrapper + multiple concurrent sessions
 
-Status: ready-for-agent
+Status: done
 
 ## What to build
 
