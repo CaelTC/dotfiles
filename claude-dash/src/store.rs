@@ -167,6 +167,7 @@ mod tests {
                 b7_reset: 1_750_500_000,
                 rep: "five_hour".to_string(),
                 status: "allowed".to_string(),
+                ..Default::default()
             },
             ts,
             None,

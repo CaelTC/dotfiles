@@ -12,7 +12,7 @@
 ///
 /// **Utilization** is the raw 0–1 fraction reported by Anthropic (no denominator
 /// is assumed — the fraction is given outright). `reset` is epoch seconds.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Budget {
     /// 5-hour **Rolling Window** **Utilization** (0–1 fraction).
     pub b5_util: f64,
@@ -27,6 +27,24 @@ pub struct Budget {
     pub rep: String,
     /// Overall unified rate-limit status (e.g. `allowed`).
     pub status: String,
+    /// The unified *overage* status (e.g. `allowed`, `disabled`) when the
+    /// account has overage configured. Empty when the headers report none.
+    ///
+    /// Optional + `#[serde(default)]` so `req` records written by slices 01–05
+    /// — which carry no overage fields — still deserialize (the field defaults
+    /// to empty).
+    #[serde(default)]
+    pub overage_status: String,
+    /// Why overage is disabled, when it is (the unified
+    /// `-overage-disabled-reason` header). Empty when not reported. Same
+    /// backward-compatible default as `overage_status`.
+    #[serde(default)]
+    pub overage_disabled_reason: String,
+    /// The unified `-fallback-percentage` — present only when the headers
+    /// report a fallback. `None` (absent) for old records and for responses
+    /// without the header.
+    #[serde(default)]
+    pub fallback_percentage: Option<f64>,
 }
 
 /// Header name carrying the 5-hour **Utilization** fraction.
@@ -41,6 +59,13 @@ pub const H_7D_RESET: &str = "anthropic-ratelimit-unified-7d-reset";
 pub const H_REP: &str = "anthropic-ratelimit-unified-representative-claim";
 /// Header name carrying the overall unified status.
 pub const H_STATUS: &str = "anthropic-ratelimit-unified-status";
+/// Header name carrying the unified *overage* status.
+pub const H_OVERAGE_STATUS: &str = "anthropic-ratelimit-unified-overage-status";
+/// Header name carrying why overage is disabled, when it is.
+pub const H_OVERAGE_DISABLED_REASON: &str =
+    "anthropic-ratelimit-unified-overage-disabled-reason";
+/// Header name carrying the unified fallback percentage.
+pub const H_FALLBACK_PCT: &str = "anthropic-ratelimit-unified-fallback-percentage";
 
 impl Budget {
     /// Parse a **Budget** reading from `anthropic-ratelimit-unified-*` headers.
@@ -72,8 +97,135 @@ impl Budget {
                 .unwrap_or(0),
             rep: lookup(H_REP).unwrap_or_default(),
             status: lookup(H_STATUS).unwrap_or_default(),
+            overage_status: lookup(H_OVERAGE_STATUS).unwrap_or_default(),
+            overage_disabled_reason: lookup(H_OVERAGE_DISABLED_REASON).unwrap_or_default(),
+            fallback_percentage: lookup(H_FALLBACK_PCT)
+                .and_then(|v| v.trim().parse::<f64>().ok()),
         })
     }
+
+    /// Which **Rolling Window** is the **Representative Window** — the binding
+    /// constraint Anthropic flags via `representative-claim`. Drives which window
+    /// the left rail visually emphasises. An unknown/empty claim defaults to the
+    /// 5-hour window (the tighter, faster-moving one — the safer headline when
+    /// Anthropic doesn't say).
+    pub fn representative(&self) -> Window {
+        match self.rep.as_str() {
+            "seven_day" => Window::SevenDay,
+            // "five_hour" — and any unknown/empty claim — headline the 5h window.
+            _ => Window::FiveHour,
+        }
+    }
+
+    /// The **Severity** of a window, driven by the unified `status` *and* the
+    /// window's **Utilization** — the single place Budget coloring is decided
+    /// (subsuming the old utilization-only threshold).
+    ///
+    /// `status`/`overage_status` are account-wide, so they gate *both* windows:
+    /// a `rejected` (or overage-`disabled`) account is [`Severity::Critical`]
+    /// regardless of a given window's fraction. Otherwise utilization decides:
+    /// filling past 0.9 is Critical, past 0.6 is Warning, else Ok.
+    pub fn severity(&self, util: f64) -> Severity {
+        // A rejected account, or an overage that's been disabled, is the binding
+        // failure — Critical for both windows no matter the fraction.
+        let rejected = self.status.eq_ignore_ascii_case("rejected");
+        if rejected || self.overage_disabled() {
+            return Severity::Critical;
+        }
+
+        // Otherwise utilization drives it (allowed → green, filling → amber/red).
+        if util >= 0.9 {
+            Severity::Critical
+        } else if util >= 0.6 {
+            Severity::Warning
+        } else {
+            Severity::Ok
+        }
+    }
+
+    /// The **overage** indicator the rail should surface, or `None` when the
+    /// headers report no overage state worth showing. Pure text — the TUI just
+    /// renders the `label`, coloured by `severity`.
+    pub fn overage(&self) -> Option<Overage> {
+        // No overage headers at all ⇒ nothing to surface.
+        if self.overage_status.is_empty()
+            && self.overage_disabled_reason.is_empty()
+            && self.fallback_percentage.is_none()
+        {
+            return None;
+        }
+
+        // A disabled overage is the loud case — show why, Critical.
+        if self.overage_disabled() {
+            let why = if self.overage_disabled_reason.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", self.overage_disabled_reason)
+            };
+            return Some(Overage {
+                label: format!("overage disabled{why}"),
+                severity: Severity::Critical,
+            });
+        }
+
+        // Otherwise an active/allowed overage, optionally with a fallback %.
+        let status = if self.overage_status.is_empty() {
+            "active".to_string()
+        } else {
+            self.overage_status.clone()
+        };
+        let fallback = match self.fallback_percentage {
+            Some(pct) => format!(" · fallback {}%", (pct * 100.0).round() as i64),
+            None => String::new(),
+        };
+        Some(Overage {
+            label: format!("overage {status}{fallback}"),
+            severity: Severity::Warning,
+        })
+    }
+
+    /// Whether overage has been *disabled* — the loud, binding-failure case that
+    /// drives both [`Severity::Critical`] and the disabled overage banner. One
+    /// source of truth shared by [`severity`](Self::severity) and
+    /// [`overage`](Self::overage) so they can't disagree.
+    fn overage_disabled(&self) -> bool {
+        self.overage_status.eq_ignore_ascii_case("disabled")
+            || !self.overage_disabled_reason.is_empty()
+    }
+}
+
+/// One of the two **Rolling Window**s. The render-time handle for which window
+/// the left rail emphasises as the **Representative Window**.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Window {
+    /// The 5-hour **Rolling Window**.
+    FiveHour,
+    /// The 7-day **Rolling Window**.
+    SevenDay,
+}
+
+/// How alarming a **Rolling Window** (or the **overage** banner) is, driven by
+/// `status` + **Utilization**. A ratatui-free enum so the *rule* is testable
+/// without a terminal; the TUI maps it to a `Color` at the render edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    /// Healthy — well within the window (rendered green).
+    Ok,
+    /// Filling up — approaching the limit (rendered amber/yellow).
+    Warning,
+    /// At/over the limit, rejected, or overage-disabled (rendered red).
+    Critical,
+}
+
+/// The **overage** indicator for the left rail: a one-line `label` and the
+/// [`Severity`] to colour it. Pure presentation — no ratatui.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Overage {
+    /// The text to show, e.g. `overage active · fallback 80%` or
+    /// `overage disabled (insufficient_credit)`.
+    pub label: String,
+    /// How alarming the overage state is.
+    pub severity: Severity,
 }
 
 #[cfg(test)]
@@ -107,8 +259,48 @@ mod tests {
                 b7_reset: 1_750_500_000,
                 rep: "five_hour".to_string(),
                 status: "allowed".to_string(),
+                ..Default::default()
             }
         );
+    }
+
+    #[test]
+    fn parses_overage_headers_when_present() {
+        let map = HashMap::from([
+            (H_5H_UTIL, "0.42"),
+            (H_STATUS, "allowed"),
+            (H_OVERAGE_STATUS, "allowed"),
+            (H_OVERAGE_DISABLED_REASON, "insufficient_credit"),
+            (H_FALLBACK_PCT, "0.8"),
+        ]);
+        let budget = Budget::from_headers(lookup_from(map)).expect("budget present");
+        assert_eq!(budget.overage_status, "allowed");
+        assert_eq!(budget.overage_disabled_reason, "insufficient_credit");
+        assert_eq!(budget.fallback_percentage, Some(0.8));
+    }
+
+    #[test]
+    fn overage_fields_absent_when_headers_missing() {
+        let map = HashMap::from([(H_5H_UTIL, "0.42"), (H_STATUS, "allowed")]);
+        let budget = Budget::from_headers(lookup_from(map)).expect("budget present");
+        assert_eq!(budget.overage_status, "");
+        assert_eq!(budget.overage_disabled_reason, "");
+        assert_eq!(budget.fallback_percentage, None);
+    }
+
+    #[test]
+    fn old_record_without_overage_fields_still_deserializes() {
+        // A `req` budget written by slices 01–05 carries no overage fields.
+        let old = r#"{
+            "b5_util": 0.42, "b5_reset": 1750000000,
+            "b7_util": 0.10, "b7_reset": 1750500000,
+            "rep": "five_hour", "status": "allowed"
+        }"#;
+        let budget: Budget = serde_json::from_str(old).expect("old record deserializes");
+        assert_eq!(budget.b5_util, 0.42);
+        assert_eq!(budget.overage_status, "");
+        assert_eq!(budget.overage_disabled_reason, "");
+        assert_eq!(budget.fallback_percentage, None);
     }
 
     #[test]
@@ -128,5 +320,70 @@ mod tests {
         assert_eq!(budget.b7_reset, 0);
         assert_eq!(budget.rep, "");
         assert_eq!(budget.status, "");
+    }
+
+    /// A minimal **Budget** with the given representative claim, status and 5h
+    /// utilization — the rest defaulted — for the presentation-seam tests.
+    fn budget_with(rep: &str, status: &str, b5_util: f64) -> Budget {
+        Budget {
+            b5_util,
+            rep: rep.to_string(),
+            status: status.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn representative_selects_window_from_claim() {
+        assert_eq!(budget_with("five_hour", "allowed", 0.0).representative(), Window::FiveHour);
+        assert_eq!(budget_with("seven_day", "allowed", 0.0).representative(), Window::SevenDay);
+        // Unknown / empty claim defaults to the 5-hour window.
+        assert_eq!(budget_with("", "allowed", 0.0).representative(), Window::FiveHour);
+        assert_eq!(budget_with("weird", "allowed", 0.0).representative(), Window::FiveHour);
+    }
+
+    #[test]
+    fn severity_is_driven_by_status_and_utilization() {
+        // Allowed + low util ⇒ Ok.
+        assert_eq!(budget_with("five_hour", "allowed", 0.1).severity(0.1), Severity::Ok);
+        // Allowed + filling ⇒ Warning.
+        assert_eq!(budget_with("five_hour", "allowed", 0.7).severity(0.7), Severity::Warning);
+        // Allowed + near full ⇒ Critical.
+        assert_eq!(budget_with("five_hour", "allowed", 0.95).severity(0.95), Severity::Critical);
+        // Rejected account ⇒ Critical even at low util.
+        assert_eq!(budget_with("five_hour", "rejected", 0.1).severity(0.1), Severity::Critical);
+    }
+
+    #[test]
+    fn severity_is_critical_when_overage_disabled() {
+        let mut b = budget_with("five_hour", "allowed", 0.1);
+        b.overage_status = "disabled".to_string();
+        b.overage_disabled_reason = "insufficient_credit".to_string();
+        assert_eq!(b.severity(0.1), Severity::Critical);
+    }
+
+    #[test]
+    fn overage_hidden_when_no_overage_headers() {
+        assert_eq!(budget_with("five_hour", "allowed", 0.1).overage(), None);
+    }
+
+    #[test]
+    fn overage_shows_active_with_fallback() {
+        let mut b = budget_with("five_hour", "allowed", 0.1);
+        b.overage_status = "allowed".to_string();
+        b.fallback_percentage = Some(0.8);
+        let overage = b.overage().expect("overage present");
+        assert_eq!(overage.label, "overage allowed · fallback 80%");
+        assert_eq!(overage.severity, Severity::Warning);
+    }
+
+    #[test]
+    fn overage_shows_disabled_with_reason() {
+        let mut b = budget_with("five_hour", "allowed", 0.1);
+        b.overage_status = "disabled".to_string();
+        b.overage_disabled_reason = "insufficient_credit".to_string();
+        let overage = b.overage().expect("overage present");
+        assert_eq!(overage.label, "overage disabled (insufficient_credit)");
+        assert_eq!(overage.severity, Severity::Critical);
     }
 }

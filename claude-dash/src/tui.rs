@@ -37,6 +37,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Gauge, Paragraph};
 use ratatui::{Frame, Terminal};
 
+use crate::budget;
 use crate::lifecycle::{self, EndedSession};
 use crate::record::ReqRecord;
 use crate::store::{self, SessionView};
@@ -331,8 +332,14 @@ fn braille_sparkline(rate: &RollingRate) -> String {
         .collect()
 }
 
-/// The left rail: 5h and 7d **Rolling Window** gauges with % **Utilization** and
-/// a countdown to each reset.
+/// The left rail: the two **Rolling Window**s (5h, 7d) with % **Utilization**, a
+/// gauge, status, and a countdown to each reset; the **Representative Window**
+/// emphasised; the **overage** state surfaced when the headers report it.
+///
+/// Every presentation decision (which window is representative, each window's
+/// [`Severity`], the overage banner) is computed by the pure, ratatui-free seam
+/// on [`Budget`] — this function only *renders* those decisions, mapping
+/// [`Severity`] to a `Color` at the render edge.
 fn draw_budget_rail(frame: &mut Frame, area: Rect, budget: Option<&ReqRecord>, now_epoch: i64) {
     let block = Block::default().borders(Borders::ALL).title(" Budget ");
     let inner = block.inner(area);
@@ -345,49 +352,105 @@ fn draw_budget_rail(frame: &mut Frame, area: Rect, budget: Option<&ReqRecord>, n
         return;
     };
 
-    // Layout: representative line, 5h label, 5h gauge, 7d label, 7d gauge.
+    let b = &req.budget;
+    // The pure seam's decisions — the TUI computes nothing here.
+    let rep_window = b.representative();
+    let overage = b.overage();
+
+    // Layout: status line, 5h label, 5h gauge, spacer, 7d label, 7d gauge, then
+    // an overage banner row that stays empty when there's no overage to show.
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2), // representative / status
+            Constraint::Length(1), // status
             Constraint::Length(1), // 5h label + countdown
             Constraint::Length(1), // 5h gauge
             Constraint::Length(1), // spacer
             Constraint::Length(1), // 7d label + countdown
             Constraint::Length(1), // 7d gauge
+            Constraint::Length(1), // spacer
+            Constraint::Length(1), // overage banner
             Constraint::Min(0),
         ])
         .split(inner);
 
-    let b = &req.budget;
-    let rep = if b.rep.is_empty() { "—" } else { b.rep.as_str() };
-    let header = Paragraph::new(Line::from(vec![
-        Span::styled("representative: ", Style::default().fg(Color::DarkGray)),
-        Span::styled(rep, Style::default().add_modifier(Modifier::BOLD)),
+    let status = if b.status.is_empty() { "—" } else { b.status.as_str() };
+    let status_line = Paragraph::new(Line::from(vec![
+        Span::styled("status: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(status, Style::default().add_modifier(Modifier::BOLD)),
     ]));
-    frame.render_widget(header, rows[0]);
+    frame.render_widget(status_line, rows[0]);
 
-    render_window(frame, rows[1], rows[2], "5h", b.b5_util, b.b5_reset, now_epoch);
-    render_window(frame, rows[4], rows[5], "7d", b.b7_util, b.b7_reset, now_epoch);
+    render_window(
+        frame,
+        rows[1],
+        rows[2],
+        "5h",
+        b.b5_util,
+        b.severity(b.b5_util),
+        b.b5_reset,
+        now_epoch,
+        rep_window == budget::Window::FiveHour,
+    );
+    render_window(
+        frame,
+        rows[4],
+        rows[5],
+        "7d",
+        b.b7_util,
+        b.severity(b.b7_util),
+        b.b7_reset,
+        now_epoch,
+        rep_window == budget::Window::SevenDay,
+    );
+
+    // The overage banner: shown only when the seam reports one, coloured by its
+    // Severity. The row simply stays blank otherwise.
+    if let Some(overage) = overage {
+        let banner = Paragraph::new(Line::from(Span::styled(
+            overage.label,
+            Style::default()
+                .fg(severity_color(overage.severity))
+                .add_modifier(Modifier::BOLD),
+        )));
+        frame.render_widget(banner, rows[7]);
+    }
 }
 
-/// Render one **Rolling Window**: a label line (`<name>  <pct>%  resets in …`)
-/// and a gauge filled to its **Utilization**.
+/// Render one **Rolling Window**: a label line (`<marker> <name>  <pct>%  resets
+/// in …`) and a gauge filled to its **Utilization**, coloured by [`Severity`].
+///
+/// The **Representative Window** is emphasised with a leading `▶` marker and a
+/// bold, brighter name; the other window gets a blank lead and a dim name — so
+/// the binding window reads at a glance.
+#[allow(clippy::too_many_arguments)]
 fn render_window(
     frame: &mut Frame,
     label_area: Rect,
     gauge_area: Rect,
     name: &str,
     util: f64,
+    severity: budget::Severity,
     reset_epoch: i64,
     now_epoch: i64,
+    representative: bool,
 ) {
     let pct = (util.clamp(0.0, 1.0) * 100.0).round() as u16;
     let countdown = format_countdown(reset_epoch - now_epoch);
+    let color = severity_color(severity);
+
+    // Emphasis: the Representative (binding) window gets a ▶ marker + bold/bright
+    // name; the other window a blank lead + dim name.
+    let (marker, name_style) = if representative {
+        ("▶ ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
+    } else {
+        ("  ", Style::default().fg(Color::DarkGray))
+    };
 
     let label = Paragraph::new(Line::from(vec![
-        Span::styled(format!("{name} "), Style::default().add_modifier(Modifier::BOLD)),
-        Span::styled(format!("{pct}% "), Style::default().fg(util_color(util))),
+        Span::styled(marker, Style::default().fg(color)),
+        Span::styled(format!("{name} "), name_style),
+        Span::styled(format!("{pct}% "), Style::default().fg(color)),
         Span::styled(
             format!("resets in {countdown}"),
             Style::default().fg(Color::DarkGray),
@@ -396,20 +459,19 @@ fn render_window(
     frame.render_widget(label, label_area);
 
     let gauge = Gauge::default()
-        .gauge_style(Style::default().fg(util_color(util)))
+        .gauge_style(Style::default().fg(color))
         .ratio(util.clamp(0.0, 1.0))
         .label(format!("{pct}%"));
     frame.render_widget(gauge, gauge_area);
 }
 
-/// Colour a gauge by how much of its window is consumed.
-fn util_color(util: f64) -> Color {
-    if util >= 0.9 {
-        Color::Red
-    } else if util >= 0.6 {
-        Color::Yellow
-    } else {
-        Color::Green
+/// Map a pure [`Severity`] to a gauge/label `Color` — the single render-edge
+/// translation, keeping ratatui out of the [`Budget`] presentation seam.
+fn severity_color(severity: budget::Severity) -> Color {
+    match severity {
+        budget::Severity::Ok => Color::Green,
+        budget::Severity::Warning => Color::Yellow,
+        budget::Severity::Critical => Color::Red,
     }
 }
 
@@ -504,9 +566,9 @@ mod tests {
     }
 
     #[test]
-    fn util_colors_by_severity() {
-        assert_eq!(util_color(0.1), Color::Green);
-        assert_eq!(util_color(0.7), Color::Yellow);
-        assert_eq!(util_color(0.95), Color::Red);
+    fn severity_maps_to_color_at_the_render_edge() {
+        assert_eq!(severity_color(budget::Severity::Ok), Color::Green);
+        assert_eq!(severity_color(budget::Severity::Warning), Color::Yellow);
+        assert_eq!(severity_color(budget::Severity::Critical), Color::Red);
     }
 }

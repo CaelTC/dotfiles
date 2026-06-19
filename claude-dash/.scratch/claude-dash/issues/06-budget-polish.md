@@ -1,6 +1,6 @@
 # Budget polish
 
-Status: ready-for-agent
+Status: done
 
 ## What to build
 
