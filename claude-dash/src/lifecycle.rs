@@ -151,9 +151,10 @@ fn summarize(view: &SessionView) -> EndedSession {
 
 /// The **Session History** selector: classify every [`SessionView`], keep the
 /// **Active** ones (with their view, for live **Throughput**) and the **Ended**
-/// ones (summarised), and return the last 10 ended by `ended_ms` (most recent
-/// first). A thin pure selector over [`classify`] — the same shape as the
-/// account-wide **Budget** and **Active Session** selectors.
+/// ones (summarised), ordered by `ended_ms` (most recent first). A thin pure
+/// selector over [`classify`] — the same shape as the account-wide **Budget**
+/// and **Active Session** selectors. The full history is returned; the
+/// scrollable **History** view paginates it at the render edge.
 pub fn split_sessions<F>(
     views: &[SessionView],
     is_alive: F,
@@ -169,9 +170,8 @@ where
             SessionState::Ended(ended) => history.push(ended),
         }
     }
-    // The last 10 ended: most recently ended first.
+    // All ended sessions, most recently ended first; the History view scrolls.
     history.sort_by(|a, b| b.ended_ms.cmp(&a.ended_ms));
-    history.truncate(10);
     (active, history)
 }
 
@@ -382,9 +382,10 @@ mod tests {
     }
 
     #[test]
-    fn split_keeps_active_and_last_ten_ended_most_recent_first() {
+    fn split_keeps_active_and_all_ended_most_recent_first() {
         // One active (alive, no end) + twelve ended; expect the active kept and
-        // only the 10 most-recently-ended in descending ended_ms order.
+        // every ended session returned in descending ended_ms order (no cap —
+        // the History view scrolls).
         let mut views = vec![view(Some(start(1, "live", 0)), vec![req(50, None)], None)];
         for i in 0..12i64 {
             views.push(view(
@@ -400,10 +401,10 @@ mod tests {
         let (active, history) = split_sessions(&views, |pid| pid == 1);
         assert_eq!(active.len(), 1);
         assert_eq!(active[0].start.as_ref().unwrap().project, "live");
-        assert_eq!(history.len(), 10);
-        // Most recent first: ended_ms 1100, 1000, …, 200.
+        assert_eq!(history.len(), 12);
+        // Most recent first: ended_ms 1100, 1000, …, 0.
         assert_eq!(history[0].ended_ms, 1_100);
-        assert_eq!(history[9].ended_ms, 200);
+        assert_eq!(history[11].ended_ms, 0);
     }
 
     #[test]

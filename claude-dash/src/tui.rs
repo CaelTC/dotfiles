@@ -10,8 +10,12 @@
 //!   `project · model · id` and shows that session's per-**Session**
 //!   **Throughput** as a rolling 60s tokens/min rate plus a braille sparkline,
 //!   windowed (not instantaneous) so bursty per-request data reads smoothly.
-//! - **Session History** lists the last 10 ended **Session**s as
-//!   `project · model · total tokens · duration · ended (relative)`.
+//! - **Session History** lists every ended **Session** as
+//!   `project · model · total tokens · duration · ended (relative)`, scrollable.
+//!
+//! The right pane shows one of two [`View`]s at a time — **Live** (the Active
+//! Session panels, the default) or **History** (the scrollable list) — toggled
+//! with `Tab`. The **Budget left rail** stays visible in both.
 //!
 //! Active vs ended is the [`lifecycle`] classifier's call, not the TUI's: the
 //! render code only renders the classification (active panels / History rows),
@@ -37,6 +41,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Gauge, Paragraph};
 use ratatui::{Frame, Terminal};
 
+use crate::alert::{self, TurnWatcher};
 use crate::budget;
 use crate::lifecycle::{self, EndedSession};
 use crate::record::ReqRecord;
@@ -46,6 +51,42 @@ use crate::throughput::{self, RollingRate};
 /// How often the dashboard ticks so countdowns advance and freshly-appended
 /// records are reflected within ~1s.
 const TICK: Duration = Duration::from_millis(1000);
+
+/// Which right-pane [`View`] is showing. **Live** (the Active Session panels) is
+/// the default; `Tab` swaps to **History** (the scrollable ended-Session list)
+/// and back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum View {
+    Live,
+    History,
+}
+
+impl View {
+    /// Toggle Live ⇄ History (the `Tab` action).
+    fn toggled(self) -> Self {
+        match self {
+            View::Live => View::History,
+            View::History => View::Live,
+        }
+    }
+}
+
+/// How long an **Active Session** must be quiet (no `req`) before it counts as
+/// having finished its turn and earns a turn-done ping. Tunable via
+/// `CLAUDE_DASH_IDLE_SECS`; the default is a balance between pinging promptly and
+/// not firing during a long tool call mid-turn.
+const DEFAULT_IDLE_SECS: i64 = 45;
+
+/// The idle threshold in milliseconds: `CLAUDE_DASH_IDLE_SECS` when set to a
+/// positive integer, else [`DEFAULT_IDLE_SECS`].
+fn idle_threshold_ms() -> i64 {
+    std::env::var("CLAUDE_DASH_IDLE_SECS")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .filter(|&s| s > 0)
+        .unwrap_or(DEFAULT_IDLE_SECS)
+        * 1_000
+}
 
 /// Run the dashboard until the user quits (`q` or Ctrl-C).
 pub fn run() -> Result<()> {
@@ -83,10 +124,35 @@ fn event_loop<B: ratatui::backend::Backend>(
     // account-wide Budget and the N session panels are thin selections over it.
     let mut sessions = store::session_views_in_dir(dir);
     let mut budget = store::newest_req_in_views(&sessions).cloned();
+
+    // Turn-done pings: remember which Active Sessions are live so we can ping when
+    // one goes quiet (Claude finished its turn). The threshold is read once.
+    let idle_after_ms = idle_threshold_ms();
+    let mut turns = TurnWatcher::new();
+
+    // Right-pane view state: Live is the default; History tracks a scroll offset
+    // (rows hidden above the viewport), clamped each tick to the current list.
+    let mut view = View::Live;
+    let mut history_scroll: u16 = 0;
     loop {
         let now = chrono::Utc::now().timestamp();
         let now_ms = chrono::Utc::now().timestamp_millis();
-        terminal.draw(|f| draw(f, budget.as_ref(), &sessions, now, now_ms))?;
+
+        // Classify once per tick: the active/ended split feeds both the render and
+        // the turn-done detection (pid-liveness is the classifier's only I/O).
+        let (active, history) = lifecycle::split_sessions(&sessions, lifecycle::pid_alive);
+
+        // Clamp the History scroll to what's actually scrollable now that the
+        // list and terminal size are known: rows beyond the last viewport line.
+        let max_scroll = max_history_scroll(history.len(), terminal.size()?.height);
+        history_scroll = history_scroll.min(max_scroll);
+
+        terminal.draw(|f| draw(f, budget.as_ref(), &active, &history, now, now_ms, view, history_scroll))?;
+
+        // Ping for every Active Session that just crossed live→idle this tick.
+        for done in turns.settle(&active, now_ms, idle_after_ms) {
+            alert::notify_macos("Claude finished its turn", &done.label);
+        }
 
         // Wait up to one tick for a keypress; the tick itself advances the
         // countdown.
@@ -96,6 +162,33 @@ fn event_loop<B: ratatui::backend::Backend>(
                     key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
                 if key.code == KeyCode::Char('q') || ctrl_c {
                     return Ok(());
+                }
+                match key.code {
+                    // Tab swaps Live ⇄ History; entering History starts at the top.
+                    KeyCode::Tab | KeyCode::BackTab => {
+                        view = view.toggled();
+                        history_scroll = 0;
+                    }
+                    // History scrolling (no-op in Live view).
+                    KeyCode::Down | KeyCode::Char('j') if view == View::History => {
+                        history_scroll = history_scroll.saturating_add(1).min(max_scroll);
+                    }
+                    KeyCode::Up | KeyCode::Char('k') if view == View::History => {
+                        history_scroll = history_scroll.saturating_sub(1);
+                    }
+                    KeyCode::PageDown if view == View::History => {
+                        history_scroll = history_scroll.saturating_add(10).min(max_scroll);
+                    }
+                    KeyCode::PageUp if view == View::History => {
+                        history_scroll = history_scroll.saturating_sub(10);
+                    }
+                    KeyCode::Home | KeyCode::Char('g') if view == View::History => {
+                        history_scroll = 0;
+                    }
+                    KeyCode::End | KeyCode::Char('G') if view == View::History => {
+                        history_scroll = max_scroll;
+                    }
+                    _ => {}
                 }
             }
         }
@@ -113,50 +206,67 @@ fn event_loop<B: ratatui::backend::Backend>(
     }
 }
 
-/// Draw the **Budget left rail**, the **Active Session** panels, and the
-/// **Session History** view.
+/// Draw the **Budget left rail**, the active [`View`] (Live panels or scrollable
+/// History) in the right pane, and the bottom help line.
 ///
-/// The active/ended split is the [`lifecycle`] classifier's, with its
-/// pid-liveness seam satisfied by the real [`lifecycle::pid_alive`] adapter; the
-/// TUI just renders the two resulting groups. History is rebuilt from the store
-/// every read, so it survives a `claude-dash` restart for free.
+/// The active/ended split is the [`lifecycle`] classifier's, computed once per
+/// tick in the event loop and passed in; the TUI just renders the selected view.
+/// History is rebuilt from the store every read, so it survives a `claude-dash`
+/// restart for free.
+#[allow(clippy::too_many_arguments)]
 fn draw(
     frame: &mut Frame,
     budget: Option<&ReqRecord>,
-    sessions: &[SessionView],
+    active: &[&SessionView],
+    history: &[EndedSession],
     now_epoch: i64,
     now_ms: i64,
+    view: View,
+    history_scroll: u16,
 ) {
+    // Reserve the bottom row for the help line; the rest holds rail + content.
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(frame.area());
+
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(40), Constraint::Min(0)])
-        .split(frame.area());
+        .split(outer[0]);
 
     draw_budget_rail(frame, chunks[0], budget, now_epoch);
 
-    // Classify every Session into Active vs Session History — pid-liveness is the
-    // classifier's only I/O, injected here as the real adapter.
-    let (active, history) = lifecycle::split_sessions(sessions, lifecycle::pid_alive);
+    // The right pane shows one view at a time; Live is the default.
+    match view {
+        View::Live => draw_sessions(frame, chunks[1], active, now_ms),
+        View::History => draw_history(frame, chunks[1], history, now_ms, history_scroll),
+    }
 
-    // The right area stacks the Active Session panels above Session History.
-    // History takes a fixed lower band so the active panels keep most of the
-    // height; final Budget-specific polish is a later slice.
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(history_height(history.len()))])
-        .split(chunks[1]);
-
-    draw_sessions(frame, rows[0], &active, now_ms);
-    draw_history(frame, rows[1], &history, now_ms);
+    draw_help(frame, outer[1], view);
 }
 
-/// The height to give the **Session History** band: a bordered box plus one row
-/// per ended **Session** (and one for the empty placeholder), capped so the
-/// **Active Session** panels always keep the bulk of the area.
-fn history_height(rows: usize) -> u16 {
-    // 2 for the top/bottom border + at least one content row, at most 10.
-    let content = rows.clamp(1, 10) as u16;
-    content + 2
+/// The largest valid **History** scroll offset for a list of `rows` rendered into
+/// a terminal `term_height` rows tall: rows that would sit above the viewport's
+/// last line. Mirrors [`draw`]'s layout — one help row, then the History box's
+/// two borders — so scrolling never runs past the final entry into empty space.
+fn max_history_scroll(rows: usize, term_height: u16) -> u16 {
+    let visible = term_height.saturating_sub(3); // help line + top/bottom border
+    (rows as u16).saturating_sub(visible)
+}
+
+/// The bottom help line: names the available view and the `Tab` toggle, plus the
+/// scroll hint while in **History**. Renders inverted-dim so it reads as chrome.
+fn draw_help(frame: &mut Frame, area: Rect, view: View) {
+    let hint = match view {
+        View::Live => "[Tab] History   [q] quit",
+        View::History => "[Tab] Live   [↑/↓ j/k] scroll   [g/G] top/bottom   [q] quit",
+    };
+    let para = Paragraph::new(Line::from(Span::styled(
+        format!(" {hint} "),
+        Style::default().fg(Color::DarkGray),
+    )));
+    frame.render_widget(para, area);
 }
 
 /// Lay the **Active Session**s out as a vertical stack of equal panels — one
@@ -261,14 +371,15 @@ fn draw_session_panel(frame: &mut Frame, area: Rect, view: &SessionView, now_ms:
     frame.render_widget(spark, rows[1]);
 }
 
-/// The **Session History** view: the last 10 ended **Session**s, each rendered as
-/// one row `project · model · total tokens · duration · ended (relative)`. The
-/// rows are already classified, summarised, and ordered (most recent first) by
-/// the [`lifecycle`] classifier — this just formats them.
-fn draw_history(frame: &mut Frame, area: Rect, history: &[EndedSession], now_ms: i64) {
+/// The **Session History** view: every ended **Session**, each rendered as one
+/// row `project · model · total tokens · duration · ended (relative)`, scrolled
+/// by `scroll` rows. The rows are already classified, summarised, and ordered
+/// (most recent first) by the [`lifecycle`] classifier — this just formats them
+/// and clips to the viewport via [`Paragraph::scroll`].
+fn draw_history(frame: &mut Frame, area: Rect, history: &[EndedSession], now_ms: i64, scroll: u16) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" Session History ");
+        .title(format!(" Session History ({}) ", history.len()));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -280,7 +391,7 @@ fn draw_history(frame: &mut Frame, area: Rect, history: &[EndedSession], now_ms:
     }
 
     let lines: Vec<Line> = history.iter().map(|e| history_row(e, now_ms)).collect();
-    let para = Paragraph::new(lines);
+    let para = Paragraph::new(lines).scroll((scroll, 0));
     frame.render_widget(para, inner);
 }
 
@@ -594,6 +705,29 @@ mod tests {
         assert_eq!(humanize_tokens(100_000), "100k");
         assert_eq!(humanize_tokens(1_200_000), "1.2M");
         assert_eq!(humanize_tokens(1_000_000), "1.0M");
+    }
+
+    #[test]
+    fn view_toggles_live_and_history() {
+        assert_eq!(View::Live.toggled(), View::History);
+        assert_eq!(View::History.toggled(), View::Live);
+    }
+
+    #[test]
+    fn max_history_scroll_caps_at_last_viewport_line() {
+        // 24-row terminal ⇒ 21 visible history rows (24 − 1 help − 2 borders).
+        // Fewer rows than fit: nothing to scroll.
+        assert_eq!(max_history_scroll(5, 24), 0);
+        assert_eq!(max_history_scroll(21, 24), 0);
+        // More rows than fit: the overflow is the max offset.
+        assert_eq!(max_history_scroll(30, 24), 9);
+    }
+
+    #[test]
+    fn max_history_scroll_handles_tiny_terminals() {
+        // A terminal too short for any content row can't scroll past 0 underflow.
+        assert_eq!(max_history_scroll(10, 2), 10);
+        assert_eq!(max_history_scroll(0, 24), 0);
     }
 
     #[test]

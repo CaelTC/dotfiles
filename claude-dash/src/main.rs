@@ -12,6 +12,7 @@
 //!   `claude` exits; `cca` calls this so the schema stays Rust-owned and the
 //!   **Session** moves into **Session History**.
 
+mod alert;
 mod budget;
 mod lifecycle;
 mod proxy;

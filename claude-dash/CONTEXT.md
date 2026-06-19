@@ -25,8 +25,16 @@ _Avoid_: "instance" (retired — use Session)
 **Active Session**:
 A **Session** whose **Proxy** is currently attached. Shown in the active box, with live **Throughput** and a `live`/`idle` indicator (a request completed recently vs quiet).
 
+**Turn-done ping**:
+A macOS banner the dashboard fires when an **Active Session** crosses `live`→`idle` — i.e. **Claude** stopped producing `req`s and went quiet, finishing its turn and waiting on the user. The "I walked away, tell me when it's my turn" signal. Distinct from a **Session** *ending* (the `claude` process exiting): the ping is per-turn for a still-running **Session**, so one **Session** can ping many times. `idle` is a gap heuristic on the **Throughput** stream (quiet ≥ `CLAUDE_DASH_IDLE_SECS`, default 45s), not a true turn boundary — a tool call longer than the threshold can fire an early ping a later `req` supersedes.
+_Avoid_: conflating with **Session History** (which is about ending, not idling).
+
 **Session History**:
-The set of ended **Session**s, kept after their **Proxy** tears down. Filterable (default view: the last 10).
+The set of ended **Session**s, kept after their **Proxy** tears down. Rendered as the **History View** — a scrollable list of every ended **Session** (most recent first, no cap).
+
+**View**:
+Which content the right pane shows — toggled with `Tab`. Two exist: the **Live View** (the **Active Session** panels, the default) and the **History View** (the scrollable **Session History** list). The **Budget** left rail stays visible in both; only the right pane swaps.
+_Avoid_: "tab", "screen", "page" (use View)
 
 **cca**:
 The thin zsh wrapper invoked in place of `claude` (evolved from the `claude --permission auto` alias). For its **Session** it stands up a local **Proxy** via `ANTHROPIC_BASE_URL`, then runs `claude` through it. The component that *captures*; **claude-dash** only *reads*.
@@ -52,7 +60,8 @@ The Claude model that served a request (e.g. `claude-opus-4-8`). **Throughput** 
 - A **Proxy** captures **Budget** (account-wide, from `anthropic-ratelimit-unified-*` headers) and **Throughput** (per-**Session**, from response bodies)
 - **Budget** spans two **Rolling Window**s (5-hour, 7-day), each with its own **Utilization** and reset; the **Representative Window** is the binding one
 - A **Session** is **Active** while its **Proxy** is attached, then enters **Session History**
-- **claude-dash** reads the shared store and renders: one **Budget** (left rail), the **Active Session**s (live throughput panels), and **Session History**
+- An **Active Session** going `live`→`idle` fires a **Turn-done ping**; the **Session** keeps running, so it can ping once per turn
+- **claude-dash** reads the shared store and renders one **Budget** (left rail) plus one of two **View**s in the right pane — the **Live View** (**Active Session** throughput panels, default) or the **History View** (scrollable **Session History**), toggled with `Tab`
 - An **Active Session** has one **Transcript**
 - **Usage** = **Budget** (authoritative, account-wide) + **Throughput** (exact, per-**Session**)
 
