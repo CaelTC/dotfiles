@@ -4,10 +4,19 @@
 # Evolved from the `claude --permission auto` alias. Per invocation cca:
 #   1. mints a short Session id,
 #   2. picks a free localhost port and starts `claude-dash proxy` on it for that id,
-#   3. writes the Session's `start` record (via `claude-dash record-start`, so the
-#      JSONL schema stays owned by the Rust code),
-#   4. exports ANTHROPIC_BASE_URL at the Proxy,
+#   3. WAITS for the Proxy to confirm it bound its port (ADR-0002 fail-open),
+#   4. ONLY THEN writes the Session's `start` record (via `claude-dash
+#      record-start`, so the JSONL schema stays owned by the Rust code) and
+#      exports ANTHROPIC_BASE_URL at the Proxy,
 #   5. runs `claude --permission auto "$@"`, passing through all args.
+#
+# Fail-open (ADR-0002): the dashboard must NEVER block `claude`. Capture is
+# best-effort. cca health-checks the Proxy before committing capture; if the
+# Proxy can't bind/start (or doesn't report ready in time), cca runs `claude`
+# DIRECTLY — without ANTHROPIC_BASE_URL, so that one run is uncaptured — rather
+# than failing. A missing dashboard row is acceptable; a blocked session is not.
+# Per the ADR there is NO mid-session supervision here (no watchdog/restart) —
+# just this pre-launch health check plus the direct-launch fallback.
 #
 # Install: build the binary (`cargo build --release`) and put both `claude-dash`
 # and this script on PATH, e.g.
@@ -15,14 +24,27 @@
 #   ln -s "$PWD/bin/cca"                     ~/.local/bin/cca
 # Then launch Claude Code with `cca` in place of `claude` (alias claude=cca if you
 # like). cca finds `claude-dash` via $CLAUDE_DASH_BIN or PATH.
-#
-# Note: fail-open health-checking (slice 05) is intentionally NOT here yet.
 
 emulate -L zsh
 set -u
 
+# How long to wait for the Proxy to report it bound its port before giving up and
+# launching claude directly (fail-open). Kept small so a failing Proxy never
+# delays claude noticeably.
+local -r ready_timeout_secs=2
+
 # The capture binary. Overridable for dev (point at target/{debug,release}).
 local dash="${CLAUDE_DASH_BIN:-claude-dash}"
+
+# Fail-open (ADR-0002): never let a capture problem block claude. Warn with the
+# reason ($1), then run claude DIRECTLY — without ANTHROPIC_BASE_URL, so this run
+# is uncaptured but not blocked. The remaining args are claude's, passed through.
+# This is the one definition of the fail-open launch contract.
+fail_open() {
+  print -u2 "cca: $1; launching claude without capture"
+  shift
+  exec claude --permission auto "$@"
+}
 
 # 1. Mint a short, filename-safe, human-labelable Session id (first 8 hex of a uuid).
 local id
@@ -43,19 +65,60 @@ s.close()
 PY
 )"
 if [[ -z "$port" ]]; then
-  print -u2 "cca: could not pick a free port; launching claude without capture"
-  exec claude --permission auto "$@"
+  fail_open "could not pick a free port" "$@"
 fi
 
 local base_url="http://127.0.0.1:${port}"
 local cwd="$PWD"
 local project="${PWD:t}"   # zsh: basename of cwd
 
-# 3. Start the per-Session Proxy in the background on the chosen port.
-"$dash" proxy --addr "127.0.0.1:${port}" --id "$id" &
+# 3. Start the per-Session Proxy in the background on the chosen port. Capture its
+#    stdout to a temp file so we can wait on the Proxy's machine-readable `READY`
+#    line (printed once it has bound the port). The Proxy's stdout/stderr are
+#    cca's to consume — separate from claude's stdio, so this never corrupts what
+#    the client sees.
+local ready_log
+ready_log="$(mktemp -t cca-ready.XXXXXX)"
+"$dash" proxy --addr "127.0.0.1:${port}" --id "$id" >"$ready_log" 2>/dev/null &
 local proxy_pid=$!
 
-# 4. Write the Session's `start` record. The pid we record is THIS shell's pid —
+# 4. Wait — with a bounded timeout — for the Proxy to confirm it bound its port.
+#    We poll the captured stdout for the `READY` line rather than probing the TCP
+#    port: the READY line is printed by the Proxy process itself only after a
+#    successful bind, so it proves THIS Proxy is up (a TCP connect could be
+#    answered by some unrelated process that grabbed a reused port). The loop is
+#    strictly bounded by ready_timeout_secs and also bails the instant the Proxy
+#    process dies, so the wait itself can never hang and block claude.
+local proxy_ready=0
+local -ri max_polls=$(( ready_timeout_secs * 20 ))  # 20 polls/sec at sleep 0.05
+local -i poll=0
+while (( poll++ < max_polls )); do
+  if grep -q '^READY ' "$ready_log" 2>/dev/null; then
+    proxy_ready=1
+    break
+  fi
+  # If the Proxy process has already exited it will never print READY — stop
+  # waiting immediately and fall through to the direct (capture-free) launch.
+  kill -0 "$proxy_pid" 2>/dev/null || break
+  sleep 0.05
+done
+rm -f "$ready_log"
+
+if (( ! proxy_ready )); then
+  # Fail-open (ADR-0002): the Proxy failed to bind/start (or didn't report ready
+  # in time). Reap any stray Proxy, then fall open — no ANTHROPIC_BASE_URL, no
+  # start record — so this run is uncaptured but never blocked. The single-place
+  # invariant holds: we have NOT exported ANTHROPIC_BASE_URL on this path.
+  kill "$proxy_pid" 2>/dev/null
+  fail_open "proxy did not come up" "$@"
+fi
+
+# --- The Proxy is confirmed bound. Only now do we commit capture. ---
+
+# Tear the Proxy down when this shell exits, however claude returns.
+trap 'kill "$proxy_pid" 2>/dev/null' EXIT INT TERM
+
+# 5. Write the Session's `start` record. The pid we record is THIS shell's pid —
 #    the process that represents the Session for slice-04 liveness. `claude` runs
 #    as a foreground child (not `exec`'d), so this shell stays alive for exactly
 #    the Session's lifetime and its pid tracks the Session's liveness.
@@ -66,19 +129,17 @@ local proxy_pid=$!
   --pid "$$" \
   || print -u2 "cca: failed to write start record for session $id"
 
-# Tear the Proxy down when this shell exits, however claude returns. proxy_pid is
-# always set by this point (the no-port path exec'd away earlier).
-trap 'kill "$proxy_pid" 2>/dev/null' EXIT INT TERM
-
-# 5. Point inference at the Proxy.
+# 6. Point inference at the Proxy. This is the ONE place ANTHROPIC_BASE_URL is
+#    ever exported, and it is reached only AFTER readiness is confirmed above —
+#    capture is committed only once the Proxy is known to be bound (ADR-0002).
 export ANTHROPIC_BASE_URL="$base_url"
 
-# 6. Run claude through the Proxy, passing through all args and preserving
+# 7. Run claude through the Proxy, passing through all args and preserving
 #    --permission auto. Not `exec` — we keep the shell alive so we can write the
 #    `end` record and the EXIT trap can reap the Proxy once claude returns.
 claude --permission auto "$@"
 
-# 7. claude has returned. Write the Session's `end` record (via record-end, so
+# 8. claude has returned. Write the Session's `end` record (via record-end, so
 #    the JSONL schema stays Rust-owned) — this is what moves the Session out of
 #    the active box and into Session History. Best-effort: if it fails, the TUI
 #    still detects the ended Session via pid-liveness once this shell exits.

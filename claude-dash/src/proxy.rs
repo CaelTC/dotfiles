@@ -66,17 +66,39 @@ pub async fn run(addr: SocketAddr, id: Option<String>) -> Result<()> {
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("binding proxy listener on {addr}"))?;
+    let local_addr = listener.local_addr()?;
+
+    // --- Readiness seam (ADR-0002 fail-open). ---
+    // The bind above is the one thing that can fail at startup; past it the Proxy
+    // is bound and about to serve. Emit a single machine-readable readiness line
+    // on STDOUT, flushed, so `cca` can wait on it deterministically before it
+    // commits capture (exports ANTHROPIC_BASE_URL). Human messages stay on stderr;
+    // stdout carries only this line, which is `cca`'s to consume — it never
+    // reaches the `claude` client. If the bind had failed, `run` returns early via
+    // `?` above and this line is never printed.
+    println!("{}", ready_line(&local_addr));
+    use std::io::Write as _;
+    let _ = std::io::stdout().flush();
 
     eprintln!(
-        "claude-dash proxy: session {id} listening on http://{} -> {UPSTREAM_BASE}",
-        listener.local_addr()?
+        "claude-dash proxy: session {id} listening on http://{local_addr} -> {UPSTREAM_BASE}"
     );
-    eprintln!("set ANTHROPIC_BASE_URL=http://{}", listener.local_addr()?);
+    eprintln!("set ANTHROPIC_BASE_URL=http://{local_addr}");
 
     axum::serve(listener, app)
         .await
         .context("serving proxy")?;
     Ok(())
+}
+
+/// The single machine-readable readiness line `cca` waits on (ADR-0002).
+///
+/// Printed to stdout once the listener is bound and the Proxy is about to serve,
+/// so `cca` can confirm the Proxy is reachable before committing capture. Carries
+/// the bound address (the OS may have resolved port `0` to an ephemeral one) so
+/// `cca` could cross-check it if it wished.
+fn ready_line(addr: &SocketAddr) -> String {
+    format!("READY http://{addr}")
 }
 
 /// Forward one request to the upstream inference base and relay the response.
@@ -245,5 +267,22 @@ impl axum::response::IntoResponse for ProxyError {
         };
         eprintln!("claude-dash proxy: {msg}");
         (StatusCode::BAD_GATEWAY, msg).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ready_line_is_the_single_token_cca_waits_on() {
+        let addr: SocketAddr = "127.0.0.1:8787".parse().unwrap();
+        let line = ready_line(&addr);
+        // First token is the unambiguous READY sentinel cca greps for.
+        assert!(line.starts_with("READY "), "got {line:?}");
+        // Carries the bound address so cca can cross-check the resolved port.
+        assert!(line.contains("127.0.0.1:8787"), "got {line:?}");
+        // Single line — must not corrupt cca's line-oriented read.
+        assert!(!line.contains('\n'), "got {line:?}");
     }
 }
