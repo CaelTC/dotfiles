@@ -34,5 +34,5 @@
   },
   "effortLevel": "xhigh",
   "editorMode": "vim",
-  "model": "opus"
+  "tui": "fullscreen"
 }

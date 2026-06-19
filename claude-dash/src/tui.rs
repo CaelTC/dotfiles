@@ -1,0 +1,574 @@
+//! The `claude-dash` TUI — a read-only dashboard.
+//!
+//! Renders the **Budget left rail**, the **Active Session** panels, and the
+//! **Session History** view:
+//! - The left rail shows the 5-hour and 7-day **Rolling Window**s with
+//!   **Utilization** as a percentage and a live countdown to each reset.
+//!   **Budget** is the newest `req` across all session files (account-wide, so
+//!   the freshest reading wins).
+//! - Each **Active Session** panel — one per running **Session** — is labelled
+//!   `project · model · id` and shows that session's per-**Session**
+//!   **Throughput** as a rolling 60s tokens/min rate plus a braille sparkline,
+//!   windowed (not instantaneous) so bursty per-request data reads smoothly.
+//! - **Session History** lists the last 10 ended **Session**s as
+//!   `project · model · total tokens · duration · ended (relative)`.
+//!
+//! Active vs ended is the [`lifecycle`] classifier's call, not the TUI's: the
+//! render code only renders the classification (active panels / History rows),
+//! it never computes liveness itself. The only liveness I/O is the classifier's
+//! injected [`lifecycle::pid_alive`] adapter.
+//!
+//! Liveness comes from two sources: a `notify` file-watch on the store
+//! directory, and a ~1s tick so countdowns advance and new records appear within
+//! ~1s.
+
+use std::path::Path;
+use std::sync::mpsc::{self, Receiver};
+use std::time::Duration;
+
+use anyhow::{Context, Result};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::ExecutableCommand;
+use notify::{RecursiveMode, Watcher};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Gauge, Paragraph};
+use ratatui::{Frame, Terminal};
+
+use crate::budget;
+use crate::lifecycle::{self, EndedSession};
+use crate::record::ReqRecord;
+use crate::store::{self, SessionView};
+use crate::throughput::{self, RollingRate};
+
+/// How often the dashboard ticks so countdowns advance and freshly-appended
+/// records are reflected within ~1s.
+const TICK: Duration = Duration::from_millis(1000);
+
+/// Run the dashboard until the user quits (`q` or Ctrl-C).
+pub fn run() -> Result<()> {
+    let dir = store::sessions_dir()?;
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("creating store dir {}", dir.display()))?;
+
+    // File-watch the store directory for liveness. We don't act on the event
+    // payload — any change just means "re-read on the next tick".
+    let (watch_tx, watch_rx) = mpsc::channel();
+    let mut watcher = notify::recommended_watcher(move |res| {
+        let _ = watch_tx.send(res);
+    })
+    .context("creating file watcher")?;
+    watcher
+        .watch(&dir, RecursiveMode::NonRecursive)
+        .with_context(|| format!("watching store dir {}", dir.display()))?;
+
+    let mut terminal = setup_terminal()?;
+    let result = event_loop(&mut terminal, &dir, &watch_rx);
+    restore_terminal(&mut terminal)?;
+    result
+}
+
+/// The render/poll loop. Redraws every tick so countdowns advance, but only
+/// re-reads the store when the watcher reports a change — the **Budget** reading
+/// itself is unchanged between writes, and the per-tick redraw just needs the
+/// current clock for the countdown.
+fn event_loop<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    dir: &Path,
+    watch_rx: &Receiver<notify::Result<notify::Event>>,
+) -> Result<()> {
+    // One read of the store yields the per-Session grouping primitive; both the
+    // account-wide Budget and the N session panels are thin selections over it.
+    let mut sessions = store::session_views_in_dir(dir);
+    let mut budget = store::newest_req_in_views(&sessions).cloned();
+    loop {
+        let now = chrono::Utc::now().timestamp();
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        terminal.draw(|f| draw(f, budget.as_ref(), &sessions, now, now_ms))?;
+
+        // Wait up to one tick for a keypress; the tick itself advances the
+        // countdown.
+        if event::poll(TICK)? {
+            if let Event::Key(key) = event::read()? {
+                let ctrl_c =
+                    key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
+                if key.code == KeyCode::Char('q') || ctrl_c {
+                    return Ok(());
+                }
+            }
+        }
+
+        // Drain any pending watch events so a burst of writes coalesces into one
+        // re-read; only then is the store re-globbed and re-parsed.
+        let mut changed = false;
+        while watch_rx.try_recv().is_ok() {
+            changed = true;
+        }
+        if changed {
+            sessions = store::session_views_in_dir(dir);
+            budget = store::newest_req_in_views(&sessions).cloned();
+        }
+    }
+}
+
+/// Draw the **Budget left rail**, the **Active Session** panels, and the
+/// **Session History** view.
+///
+/// The active/ended split is the [`lifecycle`] classifier's, with its
+/// pid-liveness seam satisfied by the real [`lifecycle::pid_alive`] adapter; the
+/// TUI just renders the two resulting groups. History is rebuilt from the store
+/// every read, so it survives a `claude-dash` restart for free.
+fn draw(
+    frame: &mut Frame,
+    budget: Option<&ReqRecord>,
+    sessions: &[SessionView],
+    now_epoch: i64,
+    now_ms: i64,
+) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(40), Constraint::Min(0)])
+        .split(frame.area());
+
+    draw_budget_rail(frame, chunks[0], budget, now_epoch);
+
+    // Classify every Session into Active vs Session History — pid-liveness is the
+    // classifier's only I/O, injected here as the real adapter.
+    let (active, history) = lifecycle::split_sessions(sessions, lifecycle::pid_alive);
+
+    // The right area stacks the Active Session panels above Session History.
+    // History takes a fixed lower band so the active panels keep most of the
+    // height; final Budget-specific polish is a later slice.
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(history_height(history.len()))])
+        .split(chunks[1]);
+
+    draw_sessions(frame, rows[0], &active, now_ms);
+    draw_history(frame, rows[1], &history, now_ms);
+}
+
+/// The height to give the **Session History** band: a bordered box plus one row
+/// per ended **Session** (and one for the empty placeholder), capped so the
+/// **Active Session** panels always keep the bulk of the area.
+fn history_height(rows: usize) -> u16 {
+    // 2 for the top/bottom border + at least one content row, at most 10.
+    let content = rows.clamp(1, 10) as u16;
+    content + 2
+}
+
+/// Lay the **Active Session**s out as a vertical stack of equal panels — one
+/// panel per **Active Session** (a **Session** the [`lifecycle`] classifier
+/// judged still running).
+fn draw_sessions(frame: &mut Frame, area: Rect, sessions: &[&SessionView], now_ms: i64) {
+    if sessions.is_empty() {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Active Sessions ");
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let msg = Paragraph::new("No Sessions yet.\nLaunch `cca` to start one…")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(msg, inner);
+        return;
+    }
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(vec![
+            Constraint::Ratio(1, sessions.len() as u32);
+            sessions.len()
+        ])
+        .split(area);
+
+    for (panel, view) in rows.iter().zip(sessions.iter()) {
+        draw_session_panel(frame, *panel, view, now_ms);
+    }
+}
+
+/// One **Active Session** panel: titled `project · model · id`, showing that
+/// session's per-**Session** **Throughput** as a rolling 60s tokens/min rate plus
+/// a braille sparkline.
+fn draw_session_panel(frame: &mut Frame, area: Rect, view: &SessionView, now_ms: i64) {
+    // The Model is the newest reading's model (Throughput breaks down per Model;
+    // the active turn's model is the freshest one captured).
+    let model = view
+        .reqs
+        .iter()
+        .rev()
+        .find_map(|r| r.throughput.as_ref())
+        .map(|tp| tp.model.as_str())
+        .filter(|m| !m.is_empty())
+        .unwrap_or("—");
+
+    // The panel label is `project · model · id` — project from the `start`
+    // record, model from the freshest Throughput, id is the Session id.
+    let project = view
+        .start
+        .as_ref()
+        .map(|s| s.project.as_str())
+        .filter(|p| !p.is_empty())
+        .unwrap_or("—");
+    let title = format!(" {project} · {model} · {} ", view.id);
+
+    let block = Block::default().borders(Borders::ALL).title(title);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // The Throughput samples: each `req` carrying a Throughput reading is one
+    // (ts, total-tokens) point for the rolling window.
+    let samples: Vec<(i64, u64)> = view
+        .reqs
+        .iter()
+        .filter_map(|r| r.throughput.as_ref().map(|tp| (r.ts, tp.total())))
+        .collect();
+
+    if samples.is_empty() {
+        let msg = Paragraph::new("No Throughput yet.\nWaiting for a request…")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(msg, inner);
+        return;
+    }
+
+    let rate = throughput::rolling_rate(samples, now_ms);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // rate
+            Constraint::Length(1), // sparkline
+            Constraint::Min(0),
+        ])
+        .split(inner);
+
+    let rate_line = Paragraph::new(Line::from(vec![
+        Span::styled(
+            format!("{} ", rate.tokens_per_min),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("tok/min (60s)", Style::default().fg(Color::DarkGray)),
+    ]));
+    frame.render_widget(rate_line, rows[0]);
+
+    let spark = Paragraph::new(Line::from(Span::styled(
+        braille_sparkline(&rate),
+        Style::default().fg(Color::Cyan),
+    )));
+    frame.render_widget(spark, rows[1]);
+}
+
+/// The **Session History** view: the last 10 ended **Session**s, each rendered as
+/// one row `project · model · total tokens · duration · ended (relative)`. The
+/// rows are already classified, summarised, and ordered (most recent first) by
+/// the [`lifecycle`] classifier — this just formats them.
+fn draw_history(frame: &mut Frame, area: Rect, history: &[EndedSession], now_ms: i64) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Session History ");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if history.is_empty() {
+        let msg = Paragraph::new("No ended Sessions yet.")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(msg, inner);
+        return;
+    }
+
+    let lines: Vec<Line> = history.iter().map(|e| history_row(e, now_ms)).collect();
+    let para = Paragraph::new(lines);
+    frame.render_widget(para, inner);
+}
+
+/// Format one **Session History** row from an [`EndedSession`]:
+/// `project · model · <total> tok · <duration> · ended <relative>`. The relative
+/// "ended Xm ago" is measured against `now_ms` (epoch milliseconds).
+fn history_row(ended: &EndedSession, now_ms: i64) -> Line<'static> {
+    // `summarize` already substitutes "—" for an absent project/model, so the
+    // fields can be rendered directly — the placeholder lives in one place.
+    let sep = Span::styled(" · ", Style::default().fg(Color::DarkGray));
+    Line::from(vec![
+        Span::styled(ended.project.clone(), Style::default().add_modifier(Modifier::BOLD)),
+        sep.clone(),
+        Span::styled(ended.model.clone(), Style::default().fg(Color::Cyan)),
+        sep.clone(),
+        Span::styled(
+            format!("{} tok", ended.total_tokens),
+            Style::default().fg(Color::Gray),
+        ),
+        sep.clone(),
+        Span::styled(
+            lifecycle::format_duration(ended.duration_ms),
+            Style::default().fg(Color::Gray),
+        ),
+        sep,
+        Span::styled(
+            format!("ended {}", lifecycle::format_ended_ago(ended.ended_ms, now_ms)),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ])
+}
+
+/// Render a [`RollingRate`]'s per-bucket token sums as a braille sparkline — one
+/// braille block per bucket, scaled to the busiest bucket so the bars show the
+/// *shape* of recent **Throughput** rather than absolute height.
+fn braille_sparkline(rate: &RollingRate) -> String {
+    // Braille bar glyphs from empty to full (8 levels).
+    const BARS: [char; 8] = ['⡀', '⡄', '⡆', '⡇', '⣇', '⣧', '⣷', '⣿'];
+    let max = rate.buckets.iter().copied().max().unwrap_or(0);
+    if max == 0 {
+        return BARS[0].to_string().repeat(rate.buckets.len());
+    }
+    rate.buckets
+        .iter()
+        .map(|&b| {
+            let level = ((b as f64 / max as f64) * (BARS.len() - 1) as f64).round() as usize;
+            BARS[level.min(BARS.len() - 1)]
+        })
+        .collect()
+}
+
+/// The left rail: the two **Rolling Window**s (5h, 7d) with % **Utilization**, a
+/// gauge, status, and a countdown to each reset; the **Representative Window**
+/// emphasised; the **overage** state surfaced when the headers report it.
+///
+/// Every presentation decision (which window is representative, each window's
+/// [`Severity`], the overage banner) is computed by the pure, ratatui-free seam
+/// on [`Budget`] — this function only *renders* those decisions, mapping
+/// [`Severity`] to a `Color` at the render edge.
+fn draw_budget_rail(frame: &mut Frame, area: Rect, budget: Option<&ReqRecord>, now_epoch: i64) {
+    let block = Block::default().borders(Borders::ALL).title(" Budget ");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let Some(req) = budget else {
+        let msg = Paragraph::new("No Budget reading yet.\nWaiting for a request…")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(msg, inner);
+        return;
+    };
+
+    let b = &req.budget;
+    // The pure seam's decisions — the TUI computes nothing here.
+    let rep_window = b.representative();
+    let overage = b.overage();
+
+    // Layout: status line, 5h label, 5h gauge, spacer, 7d label, 7d gauge, then
+    // an overage banner row that stays empty when there's no overage to show.
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // status
+            Constraint::Length(1), // 5h label + countdown
+            Constraint::Length(1), // 5h gauge
+            Constraint::Length(1), // spacer
+            Constraint::Length(1), // 7d label + countdown
+            Constraint::Length(1), // 7d gauge
+            Constraint::Length(1), // spacer
+            Constraint::Length(1), // overage banner
+            Constraint::Min(0),
+        ])
+        .split(inner);
+
+    let status = if b.status.is_empty() { "—" } else { b.status.as_str() };
+    let status_line = Paragraph::new(Line::from(vec![
+        Span::styled("status: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(status, Style::default().add_modifier(Modifier::BOLD)),
+    ]));
+    frame.render_widget(status_line, rows[0]);
+
+    render_window(
+        frame,
+        rows[1],
+        rows[2],
+        "5h",
+        b.b5_util,
+        b.severity(b.b5_util),
+        b.b5_reset,
+        now_epoch,
+        rep_window == budget::Window::FiveHour,
+    );
+    render_window(
+        frame,
+        rows[4],
+        rows[5],
+        "7d",
+        b.b7_util,
+        b.severity(b.b7_util),
+        b.b7_reset,
+        now_epoch,
+        rep_window == budget::Window::SevenDay,
+    );
+
+    // The overage banner: shown only when the seam reports one, coloured by its
+    // Severity. The row simply stays blank otherwise.
+    if let Some(overage) = overage {
+        let banner = Paragraph::new(Line::from(Span::styled(
+            overage.label,
+            Style::default()
+                .fg(severity_color(overage.severity))
+                .add_modifier(Modifier::BOLD),
+        )));
+        frame.render_widget(banner, rows[7]);
+    }
+}
+
+/// Render one **Rolling Window**: a label line (`<marker> <name>  <pct>%  resets
+/// in …`) and a gauge filled to its **Utilization**, coloured by [`Severity`].
+///
+/// The **Representative Window** is emphasised with a leading `▶` marker and a
+/// bold, brighter name; the other window gets a blank lead and a dim name — so
+/// the binding window reads at a glance.
+#[allow(clippy::too_many_arguments)]
+fn render_window(
+    frame: &mut Frame,
+    label_area: Rect,
+    gauge_area: Rect,
+    name: &str,
+    util: f64,
+    severity: budget::Severity,
+    reset_epoch: i64,
+    now_epoch: i64,
+    representative: bool,
+) {
+    let pct = (util.clamp(0.0, 1.0) * 100.0).round() as u16;
+    let countdown = format_countdown(reset_epoch - now_epoch);
+    let color = severity_color(severity);
+
+    // Emphasis: the Representative (binding) window gets a ▶ marker + bold/bright
+    // name; the other window a blank lead + dim name.
+    let (marker, name_style) = if representative {
+        ("▶ ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
+    } else {
+        ("  ", Style::default().fg(Color::DarkGray))
+    };
+
+    let label = Paragraph::new(Line::from(vec![
+        Span::styled(marker, Style::default().fg(color)),
+        Span::styled(format!("{name} "), name_style),
+        Span::styled(format!("{pct}% "), Style::default().fg(color)),
+        Span::styled(
+            format!("resets in {countdown}"),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]));
+    frame.render_widget(label, label_area);
+
+    let gauge = Gauge::default()
+        .gauge_style(Style::default().fg(color))
+        .ratio(util.clamp(0.0, 1.0))
+        .label(format!("{pct}%"));
+    frame.render_widget(gauge, gauge_area);
+}
+
+/// Map a pure [`Severity`] to a gauge/label `Color` — the single render-edge
+/// translation, keeping ratatui out of the [`Budget`] presentation seam.
+fn severity_color(severity: budget::Severity) -> Color {
+    match severity {
+        budget::Severity::Ok => Color::Green,
+        budget::Severity::Warning => Color::Yellow,
+        budget::Severity::Critical => Color::Red,
+    }
+}
+
+/// Format a countdown of `secs` seconds as `HHh MMm SSs` (or `Dd HHh` for long
+/// 7-day windows). Returns `now` once the reset has passed.
+fn format_countdown(secs: i64) -> String {
+    if secs <= 0 {
+        return "now".to_string();
+    }
+    let days = secs / 86_400;
+    let hours = (secs % 86_400) / 3_600;
+    let minutes = (secs % 3_600) / 60;
+    let seconds = secs % 60;
+
+    if days > 0 {
+        format!("{days}d {hours:02}h {minutes:02}m")
+    } else {
+        format!("{hours:02}h {minutes:02}m {seconds:02}s")
+    }
+}
+
+fn setup_terminal() -> Result<Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>> {
+    enable_raw_mode().context("enabling raw mode")?;
+    let mut stdout = std::io::stdout();
+    stdout
+        .execute(EnterAlternateScreen)
+        .context("entering alternate screen")?;
+    let backend = ratatui::backend::CrosstermBackend::new(stdout);
+    Terminal::new(backend).context("creating terminal")
+}
+
+fn restore_terminal<B: ratatui::backend::Backend + std::io::Write>(
+    terminal: &mut Terminal<B>,
+) -> Result<()> {
+    disable_raw_mode().ok();
+    terminal.backend_mut().execute(LeaveAlternateScreen).ok();
+    terminal.show_cursor().ok();
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn countdown_formats_short_window() {
+        // 1h 02m 03s
+        assert_eq!(format_countdown(3_600 + 120 + 3), "01h 02m 03s");
+    }
+
+    #[test]
+    fn countdown_formats_multi_day_window() {
+        // 2 days, 3 hours, 4 minutes
+        assert_eq!(format_countdown(2 * 86_400 + 3 * 3_600 + 4 * 60), "2d 03h 04m");
+    }
+
+    #[test]
+    fn countdown_is_now_when_elapsed() {
+        assert_eq!(format_countdown(0), "now");
+        assert_eq!(format_countdown(-5), "now");
+    }
+
+    #[test]
+    fn braille_sparkline_has_one_glyph_per_bucket() {
+        let rate = RollingRate {
+            tokens_per_min: 100,
+            buckets: vec![0, 5, 10, 0],
+        };
+        let spark = braille_sparkline(&rate);
+        assert_eq!(spark.chars().count(), 4);
+    }
+
+    #[test]
+    fn braille_sparkline_scales_busiest_bucket_to_full() {
+        let rate = RollingRate {
+            tokens_per_min: 100,
+            buckets: vec![0, 100],
+        };
+        let spark: Vec<char> = braille_sparkline(&rate).chars().collect();
+        // The busiest bucket renders as the fullest glyph.
+        assert_eq!(spark[1], '⣿');
+    }
+
+    #[test]
+    fn braille_sparkline_all_zero_is_flat() {
+        let rate = RollingRate {
+            tokens_per_min: 0,
+            buckets: vec![0, 0, 0],
+        };
+        let spark = braille_sparkline(&rate);
+        assert_eq!(spark.chars().count(), 3);
+    }
+
+    #[test]
+    fn severity_maps_to_color_at_the_render_edge() {
+        assert_eq!(severity_color(budget::Severity::Ok), Color::Green);
+        assert_eq!(severity_color(budget::Severity::Warning), Color::Yellow);
+        assert_eq!(severity_color(budget::Severity::Critical), Color::Red);
+    }
+}
