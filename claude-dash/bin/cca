@@ -1,14 +1,14 @@
 #!/usr/bin/env zsh
 # cca — the thin wrapper that launches `claude` behind a per-Session capture Proxy.
 #
-# Evolved from the `claude --permission auto` alias. Per invocation cca:
+# Evolved from the `claude --permission-mode auto` alias. Per invocation cca:
 #   1. mints a short Session id,
 #   2. picks a free localhost port and starts `claude-dash proxy` on it for that id,
 #   3. WAITS for the Proxy to confirm it bound its port (ADR-0002 fail-open),
 #   4. ONLY THEN writes the Session's `start` record (via `claude-dash
 #      record-start`, so the JSONL schema stays owned by the Rust code) and
 #      exports ANTHROPIC_BASE_URL at the Proxy,
-#   5. runs `claude --permission auto "$@"`, passing through all args.
+#   5. runs `claude --permission-mode auto "$@"`, passing through all args.
 #
 # Fail-open (ADR-0002): the dashboard must NEVER block `claude`. Capture is
 # best-effort. cca health-checks the Proxy before committing capture; if the
@@ -43,7 +43,7 @@ local dash="${CLAUDE_DASH_BIN:-claude-dash}"
 fail_open() {
   print -u2 "cca: $1; launching claude without capture"
   shift
-  exec claude --permission auto "$@"
+  exec claude --permission-mode auto "$@"
 }
 
 # 1. Mint a short, filename-safe, human-labelable Session id (first 8 hex of a uuid).
@@ -135,9 +135,9 @@ trap 'kill "$proxy_pid" 2>/dev/null' EXIT INT TERM
 export ANTHROPIC_BASE_URL="$base_url"
 
 # 7. Run claude through the Proxy, passing through all args and preserving
-#    --permission auto. Not `exec` — we keep the shell alive so we can write the
-#    `end` record and the EXIT trap can reap the Proxy once claude returns.
-claude --permission auto "$@"
+#    --permission-mode auto. Not `exec` — we keep the shell alive so we can write
+#    the `end` record and the EXIT trap can reap the Proxy once claude returns.
+claude --permission-mode auto "$@"
 
 # 8. claude has returned. Write the Session's `end` record (via record-end, so
 #    the JSONL schema stays Rust-owned) — this is what moves the Session out of

@@ -76,6 +76,16 @@ symlink "$DOTFILES_DIR/claude/settings.json" "$HOME/.claude/settings.json"
 symlink "$DOTFILES_DIR/claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
 symlink "$DOTFILES_DIR/claude/agents" "$HOME/.claude/agents"
 
+# ── claude-dash (cca) ────────────────────────────────────────────────────────
+if ! command -v cargo &>/dev/null; then
+  warn "Rust/cargo not found — skipping claude-dash install. Install Rust from https://rustup.rs and re-run."
+else
+  info "Building claude-dash (release)..."
+  cargo build --release --manifest-path "$DOTFILES_DIR/claude-dash/Cargo.toml" --quiet
+  symlink "$DOTFILES_DIR/claude-dash/target/release/claude-dash" "$HOME/.local/bin/claude-dash"
+  symlink "$DOTFILES_DIR/claude-dash/bin/cca" "$HOME/.local/bin/cca"
+fi
+
 # ── Neovim ───────────────────────────────────────────────────────────────────
 if ! command -v nvim &>/dev/null; then
   info "Installing Neovim..."
