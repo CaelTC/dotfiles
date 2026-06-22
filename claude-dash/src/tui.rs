@@ -41,7 +41,6 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Gauge, Paragraph};
 use ratatui::{Frame, Terminal};
 
-use crate::alert::{self, TurnWatcher};
 use crate::budget;
 use crate::lifecycle::{self, EndedSession};
 use crate::record::ReqRecord;
@@ -69,23 +68,6 @@ impl View {
             View::History => View::Live,
         }
     }
-}
-
-/// How long an **Active Session** must be quiet (no `req`) before it counts as
-/// having finished its turn and earns a turn-done ping. Tunable via
-/// `CLAUDE_DASH_IDLE_SECS`; the default is a balance between pinging promptly and
-/// not firing during a long tool call mid-turn.
-const DEFAULT_IDLE_SECS: i64 = 45;
-
-/// The idle threshold in milliseconds: `CLAUDE_DASH_IDLE_SECS` when set to a
-/// positive integer, else [`DEFAULT_IDLE_SECS`].
-fn idle_threshold_ms() -> i64 {
-    std::env::var("CLAUDE_DASH_IDLE_SECS")
-        .ok()
-        .and_then(|v| v.parse::<i64>().ok())
-        .filter(|&s| s > 0)
-        .unwrap_or(DEFAULT_IDLE_SECS)
-        * 1_000
 }
 
 /// Run the dashboard until the user quits (`q` or Ctrl-C).
@@ -125,11 +107,6 @@ fn event_loop<B: ratatui::backend::Backend>(
     let mut sessions = store::session_views_in_dir(dir);
     let mut budget = store::newest_req_in_views(&sessions).cloned();
 
-    // Turn-done pings: remember which Active Sessions are live so we can ping when
-    // one goes quiet (Claude finished its turn). The threshold is read once.
-    let idle_after_ms = idle_threshold_ms();
-    let mut turns = TurnWatcher::new();
-
     // Right-pane view state: Live is the default; History tracks a scroll offset
     // (rows hidden above the viewport), clamped each tick to the current list.
     let mut view = View::Live;
@@ -148,11 +125,6 @@ fn event_loop<B: ratatui::backend::Backend>(
         history_scroll = history_scroll.min(max_scroll);
 
         terminal.draw(|f| draw(f, budget.as_ref(), &active, &history, now, now_ms, view, history_scroll))?;
-
-        // Ping for every Active Session that just crossed live→idle this tick.
-        for done in turns.settle(&active, now_ms, idle_after_ms) {
-            alert::notify_macos("Claude finished its turn", &done.label);
-        }
 
         // Wait up to one tick for a keypress; the tick itself advances the
         // countdown.

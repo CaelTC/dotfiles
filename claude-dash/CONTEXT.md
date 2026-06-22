@@ -23,11 +23,7 @@ One `claude` run launched under **cca** — the unit the dashboard tracks. Ident
 _Avoid_: "instance" (retired — use Session)
 
 **Active Session**:
-A **Session** whose **Proxy** is currently attached. Shown in the active box, with live **Throughput** and a `live`/`idle` indicator (a request completed recently vs quiet).
-
-**Turn-done ping**:
-A macOS banner the dashboard fires when an **Active Session** crosses `live`→`idle` — i.e. **Claude** stopped producing `req`s and went quiet, finishing its turn and waiting on the user. The "I walked away, tell me when it's my turn" signal. Distinct from a **Session** *ending* (the `claude` process exiting): the ping is per-turn for a still-running **Session**, so one **Session** can ping many times. `idle` is a gap heuristic on the **Throughput** stream (quiet ≥ `CLAUDE_DASH_IDLE_SECS`, default 45s), not a true turn boundary — a tool call longer than the threshold can fire an early ping a later `req` supersedes.
-_Avoid_: conflating with **Session History** (which is about ending, not idling).
+A **Session** whose **Proxy** is currently attached. Shown in the active box, with live **Throughput**.
 
 **Session History**:
 The set of ended **Session**s, kept after their **Proxy** tears down. Rendered as the **History View** — a scrollable list of every ended **Session** (most recent first, no cap).
