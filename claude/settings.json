@@ -22,7 +22,8 @@
     "warp@claude-code-warp": true,
     "rust-analyzer-lsp@claude-plugins-official": true,
     "pyright-lsp@claude-plugins-official": true,
-    "frontend-design@claude-plugins-official": true
+    "frontend-design@claude-plugins-official": true,
+    "ponytail@ponytail": true
   },
   "extraKnownMarketplaces": {
     "claude-code-warp": {
@@ -30,14 +31,23 @@
         "source": "github",
         "repo": "warpdotdev/claude-code-warp"
       }
+    },
+    "ponytail": {
+      "source": {
+        "source": "github",
+        "repo": "DietrichGebert/ponytail"
+      }
     }
   },
   "effortLevel": "xhigh",
+  "tui": "fullscreen",
   "voice": {
     "enabled": true,
     "mode": "hold"
   },
   "editorMode": "vim",
   "voiceEnabled": true,
-  "tui": "fullscreen"
+  "worktree": {
+    "baseRef": "head"
+  }
 }
