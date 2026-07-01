@@ -14,9 +14,10 @@ Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agent
 
 ### Menu-bar icon
 
-The SwiftBar readout (`claude-dash status`) prefixes its title with a monochrome
-radial-burst "splash" glyph, not a text emoji. Source of truth is
-`assets/splash.svg`; the committed `assets/splash.png` (44×44 RGBA, @2x) is
+The SwiftBar readout (`claude-dash status`) prefixes its title with the white
+Claude mark, not a text emoji. Source of truth is `assets/splash.svg` (the Claude
+mark recoloured white); the committed `assets/splash.png` (44×44 RGBA, @2x) is
 rasterized from it and embedded base64 as `SPLASH_ICON` in `src/status.rs`,
-emitted via SwiftBar's `templateImage=` so it tints to the menu bar (light/dark).
-To change the icon, edit the SVG, re-rasterize the PNG, and regenerate the const.
+emitted via SwiftBar's `image=` (NOT `templateImage=`) so it renders always-white
+rather than tinting to the menu bar. To change the icon, edit the SVG,
+re-rasterize the PNG, and regenerate the const.
