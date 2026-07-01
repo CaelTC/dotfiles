@@ -28,7 +28,7 @@ use std::net::SocketAddr;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use crate::record::{EndRecord, Record, StartRecord};
+use crate::record::{EndRecord, Origin, Record, StartRecord};
 
 /// `claude-dash` — Budget/Throughput dashboard over the local capture **Proxy**.
 #[derive(Parser, Debug)]
@@ -69,6 +69,11 @@ enum Command {
         /// The launching process id (the **Session**'s liveness handle).
         #[arg(long)]
         pid: i32,
+
+        /// Tag the **Session**'s **Origin** as `Agent` (an unattended `cc`
+        /// session) rather than the default `Human` (`cca`). Only `cc` passes it.
+        #[arg(long)]
+        agent: bool,
     },
 
     /// Append a **Session**'s `end` record to its store file when `claude`
@@ -101,9 +106,12 @@ fn main() -> Result<()> {
             project,
             cwd,
             pid,
+            agent,
         }) => {
-            // cca mints the id and learns the pid; we own the record shape and
-            // the store path so the JSONL schema lives in one place.
+            // cca/cc mint the id and learn the pid; we own the record shape and
+            // the store path so the JSONL schema lives in one place. `--agent`
+            // (only `cc` passes it) tags the Session's Origin; `cca` omits it and
+            // the Session is Human.
             let dir = store::sessions_dir()?;
             let path = store::session_path(&dir, &id);
             let record = Record::Start(StartRecord {
@@ -112,6 +120,7 @@ fn main() -> Result<()> {
                 project,
                 cwd,
                 pid,
+                origin: if agent { Origin::Agent } else { Origin::Human },
             });
             store::append_record(&path, &record)
         }
