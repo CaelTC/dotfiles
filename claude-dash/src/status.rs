@@ -9,7 +9,9 @@
 //!
 //! The headline number is the **Representative Window**'s **Utilization**
 //! (via [`Budget::representative`]), coloured by [`Budget::severity`] — matching
-//! the dashboard's binding-window emphasis and severity palette.
+//! the dashboard's binding-window emphasis and severity palette. It's prefixed by
+//! a monochrome radial-burst "splash" glyph, emitted as a SwiftBar
+//! `templateImage=` (see [`SPLASH_ICON`]) so it tints to the menu-bar colour.
 
 use std::path::Path;
 
@@ -18,6 +20,12 @@ use chrono::{DateTime, Local, TimeZone};
 
 use crate::budget::{self, Budget, Severity, Window};
 use crate::store;
+
+/// Base64 of `assets/splash.png` — a monochrome 12-spoke radial burst, emitted as
+/// SwiftBar's `templateImage=` so it renders as a Claude-style sunburst and is
+/// tinted to the menu-bar colour (adapting to light/dark). Regenerate from
+/// `assets/splash.svg` (see `assets/`); single line, no wrapping.
+const SPLASH_ICON: &str = "iVBORw0KGgoAAAANSUhEUgAAACwAAAAsCAYAAAAehFoBAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGYktHRAD/AP8A/6C9p5MAAAAHdElNRQfqBwESCznSxA/sAAAAJXRFWHRkYXRlOmNyZWF0ZQAyMDI2LTA3LTAxVDE4OjExOjU3KzAwOjAw/jyQpwAAACV0RVh0ZGF0ZTptb2RpZnkAMjAyNi0wNy0wMVQxODoxMTo1NyswMDowMI9hKBsAAAAodEVYdGRhdGU6dGltZXN0YW1wADIwMjYtMDctMDFUMTg6MTE6NTcrMDA6MDDYdAnEAAAClElEQVRYw+2ZQWsTQRTHfzbtRVqbiyJ4SPwGQsgp5NQiSr5ALi25GIT2mkNBWirknA/hZ5Ae+g0EwU+gLVhaai4FeynWeMhbnLx9uzOju9gF/zBkZ+b//u9lZvbNzi78RzWxA0zl986jB8yc0itSfOkPbBpAO8f2mafu+m6LXmkBt4AT4ANwBqwanCtPHbE7E50T0S0l4JfO9WNgFGmfYCT2lm6hAd+q+j6RUyr8fY9uYVgGbli8qY4UZ1f176r+I9V/I7pBiB3hH8CGansBdALtO8J3sSG6peJYjdI1UJO+rBGuCc/tO451nDXCLeANsIc9Xa9U/T6w5fG1Jbw8HcTfnvgPyh4N0musa/DGijcD6hkjXDe4Y0OzS/oe8d7UbUM8mb6mw1szOJOMgCcGd83RapJeZklp+wJeAs4zjJORSZz1jf5DT30mdsmfHuf4OicwMaxmONJOl4EL1f7ZU78Qu75H/xB7J81Fg3Te1M63PY512Tb+pM7rsZtRCh3SKcktXwODzeNdE57Pg1ADBpGjGVoG/M7jhaOOfde7Zch8jQ49vInoBeOeqveYP79eBdg+ZL4ZPPVoIsG5+AK8A74F+FkHPgHvdccOfz+1wwynvpEOKanj1rQA0T42fCkspExhMSkfBEyPDw8i22NwABVfw6Go8w+zRAwqlYcrs9NV5lmiUk9rlXsertyJo6EM7vyZDvyn5qYRwED6so75A8OmaWhHn5pDcOfeS+ShC2yqtuf434/dCs/FJvZyKwyVe7c2AlZU2+tIDc1fIeK1bWzAer9/C5xGapyKXZ5uYWixmNStnci3JBA7d3MKzgbBa0fwkXkqeiTXPw3OuqcO8B14IoFeEj9LhaLUr0hloVLf6UrFL9meUIaxNzbJAAAAAElFTkSuQmCC";
 
 /// Entry point for `claude-dash status`: resolve the store, format the SwiftBar
 /// output, print it, and exit 0. Always `Ok(())` — SwiftBar needs exit 0 + stdout
@@ -43,15 +51,16 @@ fn render_dir(dir: &Path) -> String {
 fn render(budget: Option<&Budget>) -> String {
     let Some(b) = budget else {
         // No-data path: benign title + one dropdown line, still exit 0.
-        return "⚡ —\n---\nno usage data yet\n".to_string();
+        return format!("— | templateImage={}\n---\nno usage data yet\n", SPLASH_ICON);
     };
 
     // Headline = the Representative (binding) Window's Utilization, coloured by
     // the account-wide severity for that window — mirrors the dashboard.
     let (rep_util, _) = b.window(b.representative());
     let title = format!(
-        "⚡ {}% | color={}\n",
+        "{}% | templateImage={} color={}\n",
         budget::percent(rep_util),
+        SPLASH_ICON,
         swiftbar_color(b.severity(rep_util)),
     );
 
@@ -160,8 +169,10 @@ mod tests {
         let title = out.lines().next().unwrap();
 
         // Newest record wins (ts 400), and its Representative Window is 7-day →
-        // headline is 33%, not the older record's or the 5-hour window's.
-        assert!(title.starts_with("⚡ 33%"), "title was {title:?}");
+        // headline is 33%, not the older record's or the 5-hour window's, carried
+        // by the burst template image.
+        assert!(title.starts_with("33%"), "title was {title:?}");
+        assert!(title.contains("templateImage="), "title was {title:?}");
         assert!(out.contains("---"));
         assert!(out.contains("5-hour  20%"));
         assert!(out.contains("7-day  33%"));
@@ -171,7 +182,8 @@ mod tests {
     fn no_data_prints_benign_title_and_still_formats() {
         let dir = tempfile::tempdir().unwrap();
         let out = render_dir(dir.path());
-        assert!(out.starts_with("⚡ —\n"));
+        assert!(out.starts_with("—"), "out was {out:?}");
+        assert!(out.contains("templateImage="), "out was {out:?}");
         assert!(out.contains("no usage data yet"));
     }
 }

@@ -9,7 +9,10 @@ wired up by the `cca` wrapper. See `CONTEXT.md` for the domain language.
 
 `claude-dash status` prints the current **Budget** as [SwiftBar](https://github.com/swiftbar/SwiftBar)
 menu-bar output (headline = the **Representative Window**'s **Utilization** %,
-coloured by severity) straight from the store, so nothing needs to be running.
+coloured by severity, prefixed by a monochrome radial-burst "splash" glyph)
+straight from the store, so nothing needs to be running. The glyph ships as
+`assets/splash.png` (rasterized from `assets/splash.svg`) embedded as a SwiftBar
+`templateImage=`, so it tints to the menu bar and adapts to light/dark mode.
 Install with `brew install --cask swiftbar`, then symlink the plugin into
 SwiftBar's plugins folder and refresh (⌥-click the menu-bar item → Refresh):
 `ln -s "$PWD/bin/swiftbar/claude-usage.15s.sh" ~/Library/Application\ Support/SwiftBar/Plugins/`.
