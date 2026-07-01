@@ -84,6 +84,7 @@ else
   cargo build --release --manifest-path "$DOTFILES_DIR/claude-dash/Cargo.toml" --quiet
   symlink "$DOTFILES_DIR/claude-dash/target/release/claude-dash" "$HOME/.local/bin/claude-dash"
   symlink "$DOTFILES_DIR/claude-dash/bin/cca" "$HOME/.local/bin/cca"
+  symlink "$DOTFILES_DIR/claude-dash/bin/cc" "$HOME/.local/bin/cc"
 fi
 
 # ── treehouse ────────────────────────────────────────────────────────────────
