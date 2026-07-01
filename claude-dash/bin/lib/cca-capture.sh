@@ -1,10 +1,10 @@
 # cca-capture.sh — the shared capture lifecycle behind `cca` (human sessions) and
-# `cc` (agent sessions). Sourced, not executed: it runs inline in the caller's
+# `ccagent` (agent sessions). Sourced, not executed: it runs inline in the caller's
 # top-level shell so trap/signal/process semantics are exactly the caller's own.
 #
 # The caller sets three vars, then `source`s this file (with no args, so this
 # file inherits the caller's positional params as claude's args):
-#   _cca_prog    — program name for diagnostics ("cca" | "cc")
+#   _cca_prog    — program name for diagnostics ("cca" | "ccagent")
 #   _cca_origin  — the Session's Origin: "human" | "agent" (tags the start record)
 #   _cca_perm    — permission behavior: "force-auto" | "passthrough"
 #
@@ -36,7 +36,7 @@ local -r ready_timeout_secs=2
 local dash="${CLAUDE_DASH_BIN:-claude-dash}"
 
 # The permission behavior, resolved once into the args prepended to `claude`.
-# force-auto (cca): keep `--permission-mode auto`. passthrough (cc): nothing —
+# force-auto (cca): keep `--permission-mode auto`. passthrough (ccagent): nothing —
 # the caller's args flow straight through so an agent can pass
 # `--dangerously-skip-permissions`.
 local -a claude_perm
@@ -47,7 +47,7 @@ else
 fi
 
 # The Session's Origin, resolved once into the args passed to `record-start`.
-# agent (cc) tags the start record Origin=Agent; human (cca) passes nothing and
+# agent (ccagent) tags the start record Origin=Agent; human (cca) passes nothing and
 # the record defaults to Human.
 local -a record_origin
 if [[ "$_cca_origin" == "agent" ]]; then

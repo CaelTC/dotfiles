@@ -60,7 +60,7 @@ const TICK: Duration = Duration::from_millis(1000);
 ///   sessions (`cca`).
 /// - **History** — the scrollable ended-**Session** list (any Origin).
 /// - **Agents** — the **Active Session** panels for `Agent`-**Origin** sessions
-///   (`cc`), same panel layout as Live.
+///   (`ccagent`), same panel layout as Live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum View {
     Live,
@@ -268,7 +268,7 @@ fn draw(
                 &agents,
                 now_ms,
                 " Live Agents ",
-                "No agent Sessions yet.\nLaunch `cc` to start one…",
+                "No agent Sessions yet.\nLaunch `ccagent` to start one…",
             );
         }
         View::History => draw_history(frame, chunks[1], history, now_ms, history_scroll),
@@ -308,7 +308,7 @@ fn draw_help(frame: &mut Frame, area: Rect, view: View) {
 /// panel per **Active Session** (a **Session** the [`lifecycle`] classifier
 /// judged still running). The `empty_title`/`empty_hint` are shown when there are
 /// none, so the **Live** and **Agents** views can name their own empty state
-/// (`cca` vs `cc`) while sharing the panel layout.
+/// (`cca` vs `ccagent`) while sharing the panel layout.
 fn draw_sessions(
     frame: &mut Frame,
     area: Rect,

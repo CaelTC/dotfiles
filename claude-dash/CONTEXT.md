@@ -19,11 +19,11 @@ The fraction (0–1) of a **Rolling Window**'s allowance already consumed, as re
 The per-**Session** facet of **Usage**: tokens (input / output / cache-read / cache-creation) per **Model**, captured live by the **Proxy** from response bodies. Shown as a rolling-window rate (tokens completed in the last ~60s), not an instantaneous spike. Exact.
 
 **Session**:
-One `claude` run launched under **cca** or **cc** — the unit the dashboard tracks. Identified by a **Session id** minted by the wrapper (the store key), and labelled `project · model · id` (e.g. `nootka-kiosk · opus-4.8 · a3f1`). Carries an **Origin** (Human or Agent). **Active** while its **Proxy** is attached; moves to **Session History** when it ends. Backed by one **Transcript**.
+One `claude` run launched under **cca** or **ccagent** — the unit the dashboard tracks. Identified by a **Session id** minted by the wrapper (the store key), and labelled `project · model · id` (e.g. `nootka-kiosk · opus-4.8 · a3f1`). Carries an **Origin** (Human or Agent). **Active** while its **Proxy** is attached; moves to **Session History** when it ends. Backed by one **Transcript**.
 _Avoid_: "instance" (retired — use Session)
 
 **Origin**:
-Who launched a **Session**: **Human** (from **cca** — a person at the keyboard) or **Agent** (from **cc** — an unattended background agent). Recorded on the `start` record; older records without it default to Human. Both **Origin**s flow through the same capture **Proxy** so agent usage keeps **Budget** fresh; the dashboard tells them apart so live human and live agent activity read separately.
+Who launched a **Session**: **Human** (from **cca** — a person at the keyboard) or **Agent** (from **ccagent** — an unattended background agent). Recorded on the `start` record; older records without it default to Human. Both **Origin**s flow through the same capture **Proxy** so agent usage keeps **Budget** fresh; the dashboard tells them apart so live human and live agent activity read separately.
 
 **Active Session**:
 A **Session** whose **Proxy** is currently attached. Shown in the active box, with live **Throughput**.
@@ -38,7 +38,7 @@ _Avoid_: "tab", "screen", "page" (use View)
 **cca**:
 The thin zsh wrapper invoked in place of `claude` for a **Human**-**Origin** **Session** (evolved from the `claude --permission auto` alias). For its **Session** it stands up a local **Proxy** via `ANTHROPIC_BASE_URL`, then runs `claude --permission-mode auto` through it. The component that *captures*; **claude-dash** only *reads*.
 
-**cc**:
+**ccagent**:
 The agent-session sibling of **cca**: the same capture lifecycle (shared in `bin/lib/cca-capture.sh`) for an **Agent**-**Origin** **Session**. It tags the **Session** Agent and passes the caller's args straight through — no forced `--permission-mode auto` — so a background agent can pass `--dangerously-skip-permissions` and run unattended while still flowing through the **Proxy**.
 
 **Proxy**:
@@ -58,8 +58,8 @@ The Claude model that served a request (e.g. `claude-opus-4-8`). **Throughput** 
 
 ## Relationships
 
-- **cca** (Human) and **cc** (Agent) each run one **Session** behind one **Proxy**; many **Session**s run at once, each with its own **Proxy**, all writing to one shared store
-- A **Session** has an **Origin** (Human via **cca**, Agent via **cc**); both capture identically, and the dashboard splits the **Active Session**s by Origin into the **Live View** (Human) and **Agents View** (Agent)
+- **cca** (Human) and **ccagent** (Agent) each run one **Session** behind one **Proxy**; many **Session**s run at once, each with its own **Proxy**, all writing to one shared store
+- A **Session** has an **Origin** (Human via **cca**, Agent via **ccagent**); both capture identically, and the dashboard splits the **Active Session**s by Origin into the **Live View** (Human) and **Agents View** (Agent)
 - A **Proxy** captures **Budget** (account-wide, from `anthropic-ratelimit-unified-*` headers) and **Throughput** (per-**Session**, from response bodies)
 - **Budget** spans two **Rolling Window**s (5-hour, 7-day), each with its own **Utilization** and reset; the **Representative Window** is the binding one
 - A **Session** is **Active** while its **Proxy** is attached, then enters **Session History**
