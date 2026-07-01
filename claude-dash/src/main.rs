@@ -11,11 +11,14 @@
 //! - `claude-dash record-end` — append a **Session**'s `end` record when
 //!   `claude` exits; `cca` calls this so the schema stays Rust-owned and the
 //!   **Session** moves into **Session History**.
+//! - `claude-dash status` — a one-shot SwiftBar readout of the current **Budget**
+//!   from the store, for a macOS menu-bar **Utilization** %.
 
 mod budget;
 mod lifecycle;
 mod proxy;
 mod record;
+mod status;
 mod store;
 mod throughput;
 mod tui;
@@ -77,6 +80,11 @@ enum Command {
         #[arg(long)]
         id: String,
     },
+
+    /// Print the current **Budget** as SwiftBar menu-bar output (title +
+    /// dropdown) from the store, then exit 0. Fed by a SwiftBar plugin so a macOS
+    /// menu-bar item shows the **Representative Window**'s **Utilization** %.
+    Status,
 }
 
 fn main() -> Result<()> {
@@ -119,6 +127,7 @@ fn main() -> Result<()> {
             });
             store::append_record(&path, &record)
         }
+        Some(Command::Status) => status::run(),
         None => tui::run(),
     }
 }
