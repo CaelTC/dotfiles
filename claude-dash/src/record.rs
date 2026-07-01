@@ -15,7 +15,7 @@ use crate::budget::Budget;
 use crate::throughput::Throughput;
 
 /// A **Session**'s **Origin**: who launched it. `Human` sessions come from `cca`
-/// (an interactive human at the keyboard); `Agent` sessions come from `cc`
+/// (an interactive human at the keyboard); `Agent` sessions come from `ccagent`
 /// (firstmate's unattended background agents). Both flow through the same capture
 /// **Proxy** so agent usage keeps the account-wide **Budget** fresh; the TUI
 /// tells them apart to headline human vs agent activity separately.
@@ -29,7 +29,7 @@ pub enum Origin {
     /// A human's interactive session, launched by `cca`.
     #[default]
     Human,
-    /// An unattended agent session, launched by `cc`.
+    /// An unattended agent session, launched by `ccagent`.
     Agent,
 }
 
@@ -105,7 +105,7 @@ pub struct StartRecord {
     pub cwd: String,
     /// The launching process id (the **Session**'s liveness handle for slice 04).
     pub pid: i32,
-    /// The **Session**'s **Origin** — `Human` (from `cca`) or `Agent` (from `cc`).
+    /// The **Session**'s **Origin** — `Human` (from `cca`) or `Agent` (from `ccagent`).
     /// `#[serde(default)]` makes older `start` records (written before Origin
     /// existed, so with no `origin` field) deserialize as `Human`.
     #[serde(default)]

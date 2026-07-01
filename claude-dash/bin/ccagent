@@ -1,21 +1,21 @@
 #!/usr/bin/env zsh
-# cc — launch an AGENT's `claude` behind a per-Session capture Proxy.
+# ccagent — launch an AGENT's `claude` behind a per-Session capture Proxy.
 #
 # The agent-session sibling of `cca`: same capture lifecycle, two differences —
 # it tags the Session's Origin as Agent, and it passes the caller's args straight
 # through WITHOUT forcing `--permission-mode auto`, so a background agent can run
-# unattended (e.g. `cc --dangerously-skip-permissions -p "…"`). Routing agent
+# unattended (e.g. `ccagent --dangerously-skip-permissions -p "…"`). Routing agent
 # sessions through capture keeps the account-wide Budget (Utilization %) fresh.
-# Both `cc` and `cca` source the same lib/cca-capture.sh.
+# Both `ccagent` and `cca` source the same lib/cca-capture.sh.
 #
 # Install: symlink alongside `cca`, e.g.
-#   ln -s "$PWD/bin/cc" ~/.local/bin/cc
-# cc finds `claude-dash` via $CLAUDE_DASH_BIN or PATH.
+#   ln -s "$PWD/bin/ccagent" ~/.local/bin/ccagent
+# ccagent finds `claude-dash` via $CLAUDE_DASH_BIN or PATH.
 
 emulate -L zsh
 set -u
 
-_cca_prog=cc
+_cca_prog=ccagent
 _cca_origin=agent
 _cca_perm=passthrough
 source "${0:A:h}/lib/cca-capture.sh"

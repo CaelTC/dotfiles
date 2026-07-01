@@ -3,7 +3,7 @@
 #
 # The human+force-auto caller of the shared capture lifecycle: it tags the
 # Session's Origin as Human and forces `--permission-mode auto` (evolved from the
-# `claude --permission-mode auto` alias). Its agent-session sibling is `cc`
+# `claude --permission-mode auto` alias). Its agent-session sibling is `ccagent`
 # (Origin=Agent, args passed straight through). Both source the same
 # lib/cca-capture.sh so the capture lifecycle lives in one place.
 #

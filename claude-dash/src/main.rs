@@ -70,8 +70,8 @@ enum Command {
         #[arg(long)]
         pid: i32,
 
-        /// Tag the **Session**'s **Origin** as `Agent` (an unattended `cc`
-        /// session) rather than the default `Human` (`cca`). Only `cc` passes it.
+        /// Tag the **Session**'s **Origin** as `Agent` (an unattended `ccagent`
+        /// session) rather than the default `Human` (`cca`). Only `ccagent` passes it.
         #[arg(long)]
         agent: bool,
     },
@@ -108,9 +108,9 @@ fn main() -> Result<()> {
             pid,
             agent,
         }) => {
-            // cca/cc mint the id and learn the pid; we own the record shape and
+            // cca/ccagent mint the id and learn the pid; we own the record shape and
             // the store path so the JSONL schema lives in one place. `--agent`
-            // (only `cc` passes it) tags the Session's Origin; `cca` omits it and
+            // (only `ccagent` passes it) tags the Session's Origin; `cca` omits it and
             // the Session is Human.
             let dir = store::sessions_dir()?;
             let path = store::session_path(&dir, &id);
