@@ -518,7 +518,7 @@ fn render_window(
     now_epoch: i64,
     representative: bool,
 ) {
-    let pct = (util.clamp(0.0, 1.0) * 100.0).round() as u16;
+    let pct = budget::percent(util);
     let countdown = format_countdown(reset_epoch - now_epoch);
     let color = severity_color(severity);
 
