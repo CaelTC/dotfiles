@@ -8,7 +8,13 @@ source $(brew --prefix)/share/zsh-autosuggestions/zsh-autosuggestions.zsh
 PQ_LIB_DIR="$(brew --prefix libpq)/lib"
 
 export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+# ponytail: lazy-load nvm — eager load was ~400ms/shell (the startup hang).
+# First node/npm/npx/nvm call sources nvm.sh, then runs the real command.
+_load_nvm() { unset -f nvm node npm npx _load_nvm; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"; }
+nvm()  { _load_nvm; nvm "$@"; }
+node() { _load_nvm; node "$@"; }
+npm()  { _load_nvm; npm "$@"; }
+npx()  { _load_nvm; npx "$@"; }
 
 
 export LDFLAGS="-L/opt/homebrew/opt/openssl@1.1/lib"
