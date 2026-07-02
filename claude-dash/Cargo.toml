@@ -40,6 +40,10 @@ glob = "0.3"
 # Home dir resolution
 dirs = "5"
 
+# Base64 for the embedded menu-bar icon (`assets/splash.png` → SwiftBar `image=`);
+# already in the tree transitively, so this adds no new compilation unit.
+base64 = "0.22"
+
 # pid-liveness: one cheap `kill(pid, 0)` syscall for the Session lifecycle
 # classifier's injected liveness seam (preferred over heavy `sysinfo`).
 libc = "0.2"
