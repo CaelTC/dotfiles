@@ -104,7 +104,7 @@ else
 fi
 
 # ── Claude agent tools (axi) ─────────────────────────────────────────────────
-for pkg in lavish-axi gh-axi chrome-devtools-axi; do
+for pkg in lavish-axi gh-axi chrome-devtools-axi tasks-axi; do
   if ! command -v "$pkg" &>/dev/null; then
     info "Installing $pkg..."
     npm install -g "$pkg"
