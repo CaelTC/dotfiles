@@ -11,21 +11,33 @@
 //! (via [`Budget::representative`]), coloured by [`Budget::severity`] — matching
 //! the dashboard's binding-window emphasis and severity palette. It's prefixed by
 //! the white Claude mark, emitted as an always-white SwiftBar `image=`
-//! (see [`SPLASH_ICON`]).
+//! (see [`splash_icon`]).
 
 use std::path::Path;
+use std::sync::OnceLock;
 
 use anyhow::Result;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use chrono::{DateTime, Local, TimeZone};
 
 use crate::budget::{self, Budget, Severity, Window};
 use crate::store;
 
-/// Base64 of `assets/splash.png` — the white Claude mark, emitted as SwiftBar's
-/// `image=` so it renders always-white (not tinted to the menu-bar colour).
-/// Regenerate from `assets/splash.svg` (the Claude mark recoloured white; see
-/// `assets/`); single line, no wrapping.
-const SPLASH_ICON: &str = "iVBORw0KGgoAAAANSUhEUgAAACwAAAAsCAYAAAAehFoBAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGYktHRAAAAAAAAPlDu38AAAAHdElNRQfqBwEXLQaht2MeAAAAJXRFWHRkYXRlOmNyZWF0ZQAyMDI2LTA3LTAxVDIzOjQ1OjA2KzAwOjAw878DNwAAACV0RVh0ZGF0ZTptb2RpZnkAMjAyNi0wNy0wMVQyMzo0NTowNiswMDowMILiu4sAAAAodEVYdGRhdGU6dGltZXN0YW1wADIwMjYtMDctMDFUMjM6NDU6MDYrMDA6MDDV95pUAAAAFXRFWHRzdmc6dGl0bGUAICAgICBDbGF1ZGXrsRncAAAGrElEQVRYw72Ye4zdRRXHP3d3+0IeBYEV2mJLeVh5tWokSIxoAAkYRKugNYpBBaEmTfEPRaoYfKKRKghqjDGKEsVKTLRE5GUt6gYQpNRibRWhD/ugQunudne7249/zNzcubO/372/vVVPMrn3d86ZM585c2bmnIE2pNbbFPWb6m71GfVGdWpd3qJfTX09Oi/htRu2c0oGuVwdsEH96gUVAF+lblHXqWf/vwBPVe91PN2pTioCEXmvVDck+nfV9Tulrop6w8DmAv55wPyiSUZ6HTAnEY3FVrQS49qBABZ4KB8MOBJY1KLfLKA7+d4I7C+YGMBBwInA8UBPgXxCgAFWAg8U8C8BTioZ4Ijs+x8lYI8BbgN+Fx2zsL0LWyxN0t6s7iqI5U+ly5jofzvRGYj9c5tHqysye2vVuVU9XMuWMaVVwI8K+O8Bjs081wUclujsAp7L+h0KfLXAo3MI4dTWuwern1PvVr+kzinwyEnq3zKP7FeXZnpT1fsTnYej/VS+PPbNaa3aW3qaJEY+po4lHR8tWcYlmZ7qU+qsROcw9ZFE/r3MxlJ1pADsmHpdy/M6MXJ9gYFt6jWGm66u93J1VYHuJxOdGerGRPbxRHZxyV5Q/bF6SFXA56kvFRgZUm9XX5HoXmLzzae63kYYnaruiPxh9cLIP0P9awnYPsNl0/4Kjwo96mJ1a4nBh9QzbeQWdxXofCbK35RM6F+G2D/S5rhOabP6xkpgMy+jntXC8HPqlXFyb1Cfz+Qb1dnqQnU08h41HF+3lNjcq364MtgS0EepX2kRIt+Jy/eNAvn16hXJ952GJGhvCeBb1ckTAlsCult9e/RQEf3eEELPZvw+9abke00MiyJapR5TBNbxp1Ml0Kgz1ZsNuXBO2x2/41+MoNvRZkP4Vb1pqbXzdkLdwAXAp4EzqywWtLYPXAd8OeNNBqYTbs7ZhIToZELGuKJW5uZarVYEmmhoKXAl4WrtlP4IvBsYisDmAWfE3zlAL+Fq70n6bCsF3Ia6gAuBGwg5byfUR8gt5gEzI7h22eNva+rlwNnAC8CLQD8hURkAdgN7gL3xezi2wfg7A7gW+BDNic5/iwaBrcBfgEeAlTV1U5xhSvtjGwH2JSBHIvBdwA5gO/BvQk782gMENxTtPQM8DayNvxsifx9ATf0oIfiPAibFZZlIYt8JjRFWbjOwDng8tvUR3HBZx5raDcwlLO+hhF16MGGnTo7tZYmsi7ARJgHTouzVxHy4Iv0deBD4A/BPQjgabY9Gbw8SQnEkTmC0DrgTD9XiAFOBc4CbgNMnaMMIZjT+pt6vh15//N0G3AHcU3hOVpzEqcA1wGWMr91a0TCwGjiEUAseXrHfbuDmdgd7EfiZwBWEk+G4hL8JmAIcXWHwXxP2jcACwtE4HziBUImXlWj7SgEXAJ0OXAospnn5R4C7CRvoI4TjbYwQj60cch9wFeFUIHp8FnBKnMBr4gr0Rkc8D/ymFGzSphgqhAdtpIt1Wq9+UL0oSYCG1HvUwQq5RJ+6oCRvmKYeH20vNaSyPa2Aop6s/sDxlcWgoUY7wZD7/imR/VBdFv/3q09kfQeyzG2tek7V5KcM8GR1keEBL6cn1csMb2QHqT9JZGviJOqJ+lZDIp++rw2oX1dXJ7xnDWlsE7CqgA83JNT5ku42JOuzEwPLbFTPL8TQ6VZ/FXkb1GPVa20u559Sz1d/mvC2qx8wPM9OqEy62PGx2qe+LYKp673TkPcawdxgo6L+c+Q/rk6PvNWZze8aitrlhiLVaO9qtasS6KjwFkNpP6RuUr9oUhHENt/mx5RfGN4hUE+zUS3fb+PR+6JkghrKpfcZasNP2CgO+uN3+5LJRll0lnquodLtysD22lygPq2eksgXqvui7GfJqnQbqpaU1qknRvmliROG1S8Y9siESqOiI+5byYAvqe/KdD6byG/LZLPUxzLQ37fxSHO6ujLyR9X3VorlFpNYksSb6uezFehRf57IbyyY9DvUPVlovD+RH2F419tyoIDfqu5MBrrDsKHyp4E1ic7iAsA96tcyLz9p8z7pMdwB0zoF3GtzFbwigsvBLLBRQY/VPVQw+V6b3+b22KJ6Tqlqoj4XOC3+vxdYAuws0HsVIeeAUCHsLLG3HVhGSBvrOCZBKH7zllIP1WgdoeA8DlgObKkLarVa6oX5iRP2EmpESnQfBq4GziXUbE9UX/cW1OrUyHR6DOdxnbbWj6xObJZR25DIl6QFfxR4LPnekXu4A5v/G0o8NEP9peH9d9GEd3gF+g+Be7TT1SkZ6AAAAABJRU5ErkJggg==";
+/// Raw bytes of `assets/splash.png` — the white Claude mark (44×44 RGBA, @2x),
+/// rasterized from `assets/splash.svg`. Compiled in with `include_bytes!` so the
+/// embedded icon is always byte-identical to the committed asset (a hand-pasted
+/// base64 const once shipped two mangled bytes, corrupting the IDAT chunk and
+/// leaving SwiftBar to silently render no icon at all).
+const SPLASH_PNG: &[u8] = include_bytes!("../assets/splash.png");
+
+/// Base64 of [`SPLASH_PNG`] for SwiftBar's `image=` (NOT `templateImage=`, so it
+/// renders always-white instead of tinting to the menu-bar colour). Encoded once
+/// on first use; single line by construction, as SwiftBar requires.
+fn splash_icon() -> &'static str {
+    static ICON: OnceLock<String> = OnceLock::new();
+    ICON.get_or_init(|| BASE64.encode(SPLASH_PNG))
+}
 
 /// Entry point for `claude-dash status`: resolve the store, format the SwiftBar
 /// output, print it, and exit 0. Always `Ok(())` — SwiftBar needs exit 0 + stdout
@@ -51,7 +63,7 @@ fn render_dir(dir: &Path) -> String {
 fn render(budget: Option<&Budget>) -> String {
     let Some(b) = budget else {
         // No-data path: benign title + one dropdown line, still exit 0.
-        return format!("— | image={}\n---\nno usage data yet\n", SPLASH_ICON);
+        return format!("— | image={}\n---\nno usage data yet\n", splash_icon());
     };
 
     // Headline = the Representative (binding) Window's Utilization, coloured by
@@ -60,7 +72,7 @@ fn render(budget: Option<&Budget>) -> String {
     let title = format!(
         "{}% | image={} color={}\n",
         budget::percent(rep_util),
-        SPLASH_ICON,
+        splash_icon(),
         swiftbar_color(b.severity(rep_util)),
     );
 
@@ -187,5 +199,22 @@ mod tests {
         assert!(out.contains("image="), "out was {out:?}");
         assert!(!out.contains("templateImage="), "out was {out:?}");
         assert!(out.contains("no usage data yet"));
+    }
+
+    /// The embedded icon must round-trip: SwiftBar silently renders NO icon for
+    /// an undecodable image, which is exactly how a hand-mangled base64 const
+    /// once shipped. Decoding [`splash_icon`] back to the committed PNG bytes
+    /// (and checking the PNG signature + SwiftBar's single-line requirement)
+    /// pins the whole embed path.
+    #[test]
+    fn splash_icon_decodes_back_to_the_committed_png() {
+        let icon = splash_icon();
+        assert!(
+            !icon.contains(['\n', '\r', ' ']),
+            "SwiftBar image= must be a single unbroken line"
+        );
+        let decoded = BASE64.decode(icon).expect("splash icon must be valid base64");
+        assert_eq!(decoded, SPLASH_PNG, "encode/decode must round-trip");
+        assert_eq!(&SPLASH_PNG[..8], b"\x89PNG\r\n\x1a\n", "asset must be a PNG");
     }
 }
