@@ -31,6 +31,15 @@ use crate::store;
 /// leaving SwiftBar to silently render no icon at all).
 const SPLASH_PNG: &[u8] = include_bytes!("../assets/splash.png");
 
+/// Display size (points) for the menu-bar mark. SwiftBar hands the decoded PNG
+/// straight to `NSImage(data:)` and sets it on the status-item button with no
+/// size cap, and a 44px PNG without DPI metadata is 44 *points* — which dwarfed
+/// the menu bar. SwiftBar's `MenuLineParameters.resizedImageIfRequested` scales
+/// the image only when BOTH `width=` and `height=` params are present, so both
+/// are emitted below. 18pt is the standard menu-bar icon size; the 44px bitmap
+/// stays as the backing so the mark is crisp on retina (@2x = 36px < 44px).
+const SPLASH_ICON_POINTS: u32 = 18;
+
 /// Base64 of [`SPLASH_PNG`] for SwiftBar's `image=` (NOT `templateImage=`, so it
 /// renders always-white instead of tinting to the menu-bar colour). Encoded once
 /// on first use; single line by construction, as SwiftBar requires.
@@ -63,17 +72,22 @@ fn render_dir(dir: &Path) -> String {
 fn render(budget: Option<&Budget>) -> String {
     let Some(b) = budget else {
         // No-data path: benign title + one dropdown line, still exit 0.
-        return format!("— | image={}\n---\nno usage data yet\n", splash_icon());
+        return format!(
+            "— | image={} width={s} height={s}\n---\nno usage data yet\n",
+            splash_icon(),
+            s = SPLASH_ICON_POINTS,
+        );
     };
 
     // Headline = the Representative (binding) Window's Utilization, coloured by
     // the account-wide severity for that window — mirrors the dashboard.
     let (rep_util, _) = b.window(b.representative());
     let title = format!(
-        "{}% | image={} color={}\n",
+        "{}% | image={} width={s} height={s} color={}\n",
         budget::percent(rep_util),
         splash_icon(),
         swiftbar_color(b.severity(rep_util)),
+        s = SPLASH_ICON_POINTS,
     );
 
     // Dropdown: both windows with their % and reset, each coloured by its own
@@ -182,10 +196,16 @@ mod tests {
 
         // Newest record wins (ts 400), and its Representative Window is 7-day →
         // headline is 33%, not the older record's or the 5-hour window's, carried
-        // by the always-white Claude mark image.
+        // by the always-white Claude mark image at menu-bar point size.
         assert!(title.starts_with("33%"), "title was {title:?}");
         assert!(title.contains("image="), "title was {title:?}");
         assert!(!title.contains("templateImage="), "title was {title:?}");
+        // SwiftBar scales a title image only when BOTH width= and height= are
+        // present; without them the 44px PNG renders at 44pt and floods the bar.
+        assert!(
+            title.contains("width=18 height=18"),
+            "title must pin the menu-bar icon size, was {title:?}"
+        );
         assert!(out.contains("---"));
         assert!(out.contains("5-hour  20%"));
         assert!(out.contains("7-day  33%"));
@@ -198,6 +218,10 @@ mod tests {
         assert!(out.starts_with("—"), "out was {out:?}");
         assert!(out.contains("image="), "out was {out:?}");
         assert!(!out.contains("templateImage="), "out was {out:?}");
+        assert!(
+            out.contains("width=18 height=18"),
+            "no-data title must pin the menu-bar icon size too, was {out:?}"
+        );
         assert!(out.contains("no usage data yet"));
     }
 
