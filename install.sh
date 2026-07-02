@@ -84,7 +84,35 @@ else
   cargo build --release --manifest-path "$DOTFILES_DIR/claude-dash/Cargo.toml" --quiet
   symlink "$DOTFILES_DIR/claude-dash/target/release/claude-dash" "$HOME/.local/bin/claude-dash"
   symlink "$DOTFILES_DIR/claude-dash/bin/cca" "$HOME/.local/bin/cca"
+  symlink "$DOTFILES_DIR/claude-dash/bin/ccagent" "$HOME/.local/bin/ccagent"
 fi
+
+# ── treehouse ────────────────────────────────────────────────────────────────
+if ! command -v treehouse &>/dev/null; then
+  info "Installing treehouse..."
+  curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh
+else
+  info "treehouse already installed"
+fi
+
+# ── no-mistakes ──────────────────────────────────────────────────────────────
+if ! command -v no-mistakes &>/dev/null; then
+  info "Installing no-mistakes..."
+  curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh
+else
+  info "no-mistakes already installed"
+fi
+
+# ── Claude agent tools (axi) ─────────────────────────────────────────────────
+for pkg in lavish-axi gh-axi chrome-devtools-axi tasks-axi; do
+  if ! command -v "$pkg" &>/dev/null; then
+    info "Installing $pkg..."
+    npm install -g "$pkg"
+  else
+    info "$pkg already installed"
+  fi
+  "$pkg" setup hooks
+done
 
 # ── Neovim ───────────────────────────────────────────────────────────────────
 if ! command -v nvim &>/dev/null; then

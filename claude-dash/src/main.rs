@@ -11,11 +11,14 @@
 //! - `claude-dash record-end` — append a **Session**'s `end` record when
 //!   `claude` exits; `cca` calls this so the schema stays Rust-owned and the
 //!   **Session** moves into **Session History**.
+//! - `claude-dash status` — a one-shot SwiftBar readout of the current **Budget**
+//!   from the store, for a macOS menu-bar **Utilization** %.
 
 mod budget;
 mod lifecycle;
 mod proxy;
 mod record;
+mod status;
 mod store;
 mod throughput;
 mod tui;
@@ -25,7 +28,7 @@ use std::net::SocketAddr;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use crate::record::{EndRecord, Record, StartRecord};
+use crate::record::{EndRecord, Origin, Record, StartRecord};
 
 /// `claude-dash` — Budget/Throughput dashboard over the local capture **Proxy**.
 #[derive(Parser, Debug)]
@@ -66,6 +69,11 @@ enum Command {
         /// The launching process id (the **Session**'s liveness handle).
         #[arg(long)]
         pid: i32,
+
+        /// Tag the **Session**'s **Origin** as `Agent` (an unattended `ccagent`
+        /// session) rather than the default `Human` (`cca`). Only `ccagent` passes it.
+        #[arg(long)]
+        agent: bool,
     },
 
     /// Append a **Session**'s `end` record to its store file when `claude`
@@ -77,6 +85,11 @@ enum Command {
         #[arg(long)]
         id: String,
     },
+
+    /// Print the current **Budget** as SwiftBar menu-bar output (title +
+    /// dropdown) from the store, then exit 0. Fed by a SwiftBar plugin so a macOS
+    /// menu-bar item shows the **Representative Window**'s **Utilization** %.
+    Status,
 }
 
 fn main() -> Result<()> {
@@ -93,9 +106,12 @@ fn main() -> Result<()> {
             project,
             cwd,
             pid,
+            agent,
         }) => {
-            // cca mints the id and learns the pid; we own the record shape and
-            // the store path so the JSONL schema lives in one place.
+            // cca/ccagent mint the id and learn the pid; we own the record shape and
+            // the store path so the JSONL schema lives in one place. `--agent`
+            // (only `ccagent` passes it) tags the Session's Origin; `cca` omits it and
+            // the Session is Human.
             let dir = store::sessions_dir()?;
             let path = store::session_path(&dir, &id);
             let record = Record::Start(StartRecord {
@@ -104,6 +120,7 @@ fn main() -> Result<()> {
                 project,
                 cwd,
                 pid,
+                origin: if agent { Origin::Agent } else { Origin::Human },
             });
             store::append_record(&path, &record)
         }
@@ -119,6 +136,7 @@ fn main() -> Result<()> {
             });
             store::append_record(&path, &record)
         }
+        Some(Command::Status) => status::run(),
         None => tui::run(),
     }
 }

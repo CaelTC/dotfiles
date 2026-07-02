@@ -117,6 +117,18 @@ impl Budget {
         }
     }
 
+    /// The `(util, reset)` of a given **Rolling Window** — the lookup that turns
+    /// a [`Window`] handle into that window's stored **Utilization** fraction and
+    /// reset epoch. Lets callers headline the **Representative Window** (via
+    /// [`representative`](Self::representative)) without re-deriving which field
+    /// belongs to which window.
+    pub fn window(&self, window: Window) -> (f64, i64) {
+        match window {
+            Window::FiveHour => (self.b5_util, self.b5_reset),
+            Window::SevenDay => (self.b7_util, self.b7_reset),
+        }
+    }
+
     /// The **Severity** of a window, driven by the unified `status` *and* the
     /// window's **Utilization** — the single place Budget coloring is decided
     /// (subsuming the old utilization-only threshold).
@@ -192,6 +204,13 @@ impl Budget {
         self.overage_status.eq_ignore_ascii_case("disabled")
             || !self.overage_disabled_reason.is_empty()
     }
+}
+
+/// Render a 0–1 **Utilization** fraction as a whole-percent integer, clamped to
+/// 0–100. The single fraction→percent rule shared by the dashboard gauge and the
+/// menu-bar readout, so the two can't drift apart.
+pub fn percent(util: f64) -> u16 {
+    (util.clamp(0.0, 1.0) * 100.0).round() as u16
 }
 
 /// One of the two **Rolling Window**s. The render-time handle for which window

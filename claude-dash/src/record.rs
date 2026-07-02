@@ -14,6 +14,25 @@ use serde::{Deserialize, Serialize};
 use crate::budget::Budget;
 use crate::throughput::Throughput;
 
+/// A **Session**'s **Origin**: who launched it. `Human` sessions come from `cca`
+/// (an interactive human at the keyboard); `Agent` sessions come from `ccagent`
+/// (firstmate's unattended background agents). Both flow through the same capture
+/// **Proxy** so agent usage keeps the account-wide **Budget** fresh; the TUI
+/// tells them apart to headline human vs agent activity separately.
+///
+/// `Human` is the default so a `start` record written before Origin existed (it
+/// carries no `origin` field) deserializes as `Human` — old sessions were all
+/// human. Serialized snake_case (`"human"` / `"agent"`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Origin {
+    /// A human's interactive session, launched by `cca`.
+    #[default]
+    Human,
+    /// An unattended agent session, launched by `ccagent`.
+    Agent,
+}
+
 /// A tagged store record. The `t` field discriminates the variant so additional
 /// record types can be appended to the same JSONL file in later slices without
 /// breaking readers.
@@ -86,6 +105,11 @@ pub struct StartRecord {
     pub cwd: String,
     /// The launching process id (the **Session**'s liveness handle for slice 04).
     pub pid: i32,
+    /// The **Session**'s **Origin** — `Human` (from `cca`) or `Agent` (from `ccagent`).
+    /// `#[serde(default)]` makes older `start` records (written before Origin
+    /// existed, so with no `origin` field) deserialize as `Human`.
+    #[serde(default)]
+    pub origin: Origin,
 }
 
 /// An `end` record: `cca` writes one per **Session** when `claude` exits. It is
@@ -245,6 +269,7 @@ mod tests {
             project: "claude-dash".to_string(),
             cwd: "/Users/cael/dotfiles/claude-dash".to_string(),
             pid: 4242,
+            origin: Origin::Human,
         }
     }
 
@@ -269,6 +294,24 @@ mod tests {
         let parsed: Record = serde_json::from_str(&json).unwrap();
         assert_eq!(original, parsed);
         assert_eq!(parsed.as_start(), Some(&sample_start()));
+    }
+
+    #[test]
+    fn start_record_origin_backward_compat_and_agent_round_trip() {
+        // Backward compatibility (MANDATORY): a `start` record written before
+        // Origin existed carries no `origin` field, and must deserialize as Human.
+        let old_json = r#"{"t":"start","id":"a1b2c3d4","ts":1750000000000,"project":"claude-dash","cwd":"/w","pid":4242}"#;
+        let parsed: Record = serde_json::from_str(old_json).unwrap();
+        assert_eq!(parsed.as_start().unwrap().origin, Origin::Human);
+
+        // A new Agent start record round-trips, serializing origin snake_case.
+        let mut agent = sample_start();
+        agent.origin = Origin::Agent;
+        let json = serde_json::to_string(&Record::Start(agent.clone())).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["origin"], "agent");
+        let parsed: Record = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.as_start(), Some(&agent));
     }
 
     #[test]

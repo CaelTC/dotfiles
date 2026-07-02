@@ -251,6 +251,7 @@ mod tests {
             project: project.to_string(),
             cwd: format!("/work/{project}"),
             pid,
+            origin: crate::record::Origin::Human,
         }
     }
 

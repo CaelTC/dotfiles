@@ -13,9 +13,11 @@
 //! - **Session History** lists every ended **Session** as
 //!   `project · model · total tokens · duration · ended (relative)`, scrollable.
 //!
-//! The right pane shows one of two [`View`]s at a time — **Live** (the Active
-//! Session panels, the default) or **History** (the scrollable list) — toggled
-//! with `Tab`. The **Budget left rail** stays visible in both.
+//! The right pane shows one of three [`View`]s at a time — **Live** (the
+//! `Human`-Origin Active Session panels, the default), **History** (the
+//! scrollable ended-Session list), or **Agents** (the `Agent`-Origin Active
+//! Session panels) — cycled with `Tab`/`BackTab`. The **Budget left rail** stays
+//! visible in all three.
 //!
 //! Active vs ended is the [`lifecycle`] classifier's call, not the TUI's: the
 //! render code only renders the classification (active panels / History rows),
@@ -43,7 +45,7 @@ use ratatui::{Frame, Terminal};
 
 use crate::budget;
 use crate::lifecycle::{self, EndedSession};
-use crate::record::ReqRecord;
+use crate::record::{Origin, ReqRecord};
 use crate::store::{self, SessionView};
 use crate::throughput::{self, RollingRate};
 
@@ -51,23 +53,52 @@ use crate::throughput::{self, RollingRate};
 /// records are reflected within ~1s.
 const TICK: Duration = Duration::from_millis(1000);
 
-/// Which right-pane [`View`] is showing. **Live** (the Active Session panels) is
-/// the default; `Tab` swaps to **History** (the scrollable ended-Session list)
-/// and back.
+/// Which right-pane [`View`] is showing. Three exist, cycled with `Tab`
+/// (forward) / `BackTab` (reverse) in the captain's tab order **Live Human
+/// Session | History | Live Agents**:
+/// - **Live** (the default) — the **Active Session** panels for `Human`-**Origin**
+///   sessions (`cca`).
+/// - **History** — the scrollable ended-**Session** list (any Origin).
+/// - **Agents** — the **Active Session** panels for `Agent`-**Origin** sessions
+///   (`ccagent`), same panel layout as Live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum View {
     Live,
     History,
+    Agents,
 }
 
 impl View {
-    /// Toggle Live ⇄ History (the `Tab` action).
-    fn toggled(self) -> Self {
+    /// Advance **Live → History → Agents → Live** (the `Tab` action).
+    fn next(self) -> Self {
         match self {
             View::Live => View::History,
+            View::History => View::Agents,
+            View::Agents => View::Live,
+        }
+    }
+
+    /// Reverse **Live → Agents → History → Live** (the `BackTab` action).
+    fn prev(self) -> Self {
+        match self {
+            View::Live => View::Agents,
+            View::Agents => View::History,
             View::History => View::Live,
         }
     }
+}
+
+/// Select the **Active Session**s of a given **Origin** — the filter behind the
+/// **Live** (Human) and **Agents** (Agent) views over the shared active set the
+/// [`lifecycle`] classifier produced. Active-vs-ended stays the classifier's
+/// call; this only partitions the active set by Origin. A session with no `start`
+/// can't be active, but defaults to `Human` for safety.
+fn active_of_origin<'a>(active: &[&'a SessionView], origin: Origin) -> Vec<&'a SessionView> {
+    active
+        .iter()
+        .copied()
+        .filter(|v| v.start.as_ref().map(|s| s.origin).unwrap_or_default() == origin)
+        .collect()
 }
 
 /// Run the dashboard until the user quits (`q` or Ctrl-C).
@@ -136,9 +167,14 @@ fn event_loop<B: ratatui::backend::Backend>(
                     return Ok(());
                 }
                 match key.code {
-                    // Tab swaps Live ⇄ History; entering History starts at the top.
-                    KeyCode::Tab | KeyCode::BackTab => {
-                        view = view.toggled();
+                    // Tab cycles forward (Live → History → Agents), BackTab
+                    // reverse; entering History starts at the top.
+                    KeyCode::Tab => {
+                        view = view.next();
+                        history_scroll = 0;
+                    }
+                    KeyCode::BackTab => {
+                        view = view.prev();
                         history_scroll = 0;
                     }
                     // History scrolling (no-op in Live view).
@@ -209,9 +245,32 @@ fn draw(
 
     draw_budget_rail(frame, chunks[0], budget, now_epoch);
 
-    // The right pane shows one view at a time; Live is the default.
+    // The right pane shows one view at a time; Live is the default. Live and
+    // Agents share the Active Session panel layout, differing only in which
+    // Origin they select from the (classifier-produced) active set.
     match view {
-        View::Live => draw_sessions(frame, chunks[1], active, now_ms),
+        View::Live => {
+            let humans = active_of_origin(active, Origin::Human);
+            draw_sessions(
+                frame,
+                chunks[1],
+                &humans,
+                now_ms,
+                " Active Sessions ",
+                "No Sessions yet.\nLaunch `cca` to start one…",
+            );
+        }
+        View::Agents => {
+            let agents = active_of_origin(active, Origin::Agent);
+            draw_sessions(
+                frame,
+                chunks[1],
+                &agents,
+                now_ms,
+                " Live Agents ",
+                "No agent Sessions yet.\nLaunch `ccagent` to start one…",
+            );
+        }
         View::History => draw_history(frame, chunks[1], history, now_ms, history_scroll),
     }
 
@@ -227,12 +286,16 @@ fn max_history_scroll(rows: usize, term_height: u16) -> u16 {
     (rows as u16).saturating_sub(visible)
 }
 
-/// The bottom help line: names the available view and the `Tab` toggle, plus the
+/// The bottom help line: names all three views (Live Human | History | Live
+/// Agents) with the current one bracketed, the `Tab`/`BackTab` cycle, plus the
 /// scroll hint while in **History**. Renders inverted-dim so it reads as chrome.
 fn draw_help(frame: &mut Frame, area: Rect, view: View) {
     let hint = match view {
-        View::Live => "[Tab] History   [q] quit",
-        View::History => "[Tab] Live   [↑/↓ j/k] scroll   [g/G] top/bottom   [q] quit",
+        View::Live => "[Live Human]  History  Live Agents   ·   [Tab/⇧Tab] cycle   [q] quit",
+        View::History => {
+            "Live Human  [History]  Live Agents   ·   [Tab/⇧Tab] cycle   [↑/↓ j/k] scroll   [g/G] top/bottom   [q] quit"
+        }
+        View::Agents => "Live Human  History  [Live Agents]   ·   [Tab/⇧Tab] cycle   [q] quit",
     };
     let para = Paragraph::new(Line::from(Span::styled(
         format!(" {hint} "),
@@ -243,15 +306,22 @@ fn draw_help(frame: &mut Frame, area: Rect, view: View) {
 
 /// Lay the **Active Session**s out as a vertical stack of equal panels — one
 /// panel per **Active Session** (a **Session** the [`lifecycle`] classifier
-/// judged still running).
-fn draw_sessions(frame: &mut Frame, area: Rect, sessions: &[&SessionView], now_ms: i64) {
+/// judged still running). The `empty_title`/`empty_hint` are shown when there are
+/// none, so the **Live** and **Agents** views can name their own empty state
+/// (`cca` vs `ccagent`) while sharing the panel layout.
+fn draw_sessions(
+    frame: &mut Frame,
+    area: Rect,
+    sessions: &[&SessionView],
+    now_ms: i64,
+    empty_title: &str,
+    empty_hint: &str,
+) {
     if sessions.is_empty() {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" Active Sessions ");
+        let block = Block::default().borders(Borders::ALL).title(empty_title.to_string());
         let inner = block.inner(area);
         frame.render_widget(block, area);
-        let msg = Paragraph::new("No Sessions yet.\nLaunch `cca` to start one…")
+        let msg = Paragraph::new(empty_hint.to_string())
             .style(Style::default().fg(Color::DarkGray));
         frame.render_widget(msg, inner);
         return;
@@ -518,7 +588,7 @@ fn render_window(
     now_epoch: i64,
     representative: bool,
 ) {
-    let pct = (util.clamp(0.0, 1.0) * 100.0).round() as u16;
+    let pct = budget::percent(util);
     let countdown = format_countdown(reset_epoch - now_epoch);
     let color = severity_color(severity);
 
@@ -680,9 +750,51 @@ mod tests {
     }
 
     #[test]
-    fn view_toggles_live_and_history() {
-        assert_eq!(View::Live.toggled(), View::History);
-        assert_eq!(View::History.toggled(), View::Live);
+    fn view_cycles_forward_and_reverse() {
+        // Forward (Tab): Live → History → Agents → Live.
+        assert_eq!(View::Live.next(), View::History);
+        assert_eq!(View::History.next(), View::Agents);
+        assert_eq!(View::Agents.next(), View::Live);
+        // Reverse (BackTab): Live → Agents → History → Live.
+        assert_eq!(View::Live.prev(), View::Agents);
+        assert_eq!(View::Agents.prev(), View::History);
+        assert_eq!(View::History.prev(), View::Live);
+    }
+
+    /// A `SessionView` with the given id and **Origin**, active-shaped (has a
+    /// `start`, no `end`) so it stands in for a classified Active Session.
+    fn active_view(id: &str, origin: Origin) -> SessionView {
+        SessionView {
+            id: id.to_string(),
+            start: Some(crate::record::StartRecord {
+                id: id.to_string(),
+                ts: 0,
+                project: "p".to_string(),
+                cwd: "/p".to_string(),
+                pid: 1,
+                origin,
+            }),
+            reqs: vec![],
+            end: None,
+        }
+    }
+
+    #[test]
+    fn live_selects_humans_and_agents_selects_agents() {
+        let h1 = active_view("h1", Origin::Human);
+        let a1 = active_view("a1", Origin::Agent);
+        let h2 = active_view("h2", Origin::Human);
+        let active: Vec<&SessionView> = vec![&h1, &a1, &h2];
+
+        // Live view (Human) selects only the human sessions.
+        let humans = active_of_origin(&active, Origin::Human);
+        let human_ids: Vec<&str> = humans.iter().map(|v| v.id.as_str()).collect();
+        assert_eq!(human_ids, vec!["h1", "h2"]);
+
+        // Agents view (Agent) selects only the agent sessions.
+        let agents = active_of_origin(&active, Origin::Agent);
+        let agent_ids: Vec<&str> = agents.iter().map(|v| v.id.as_str()).collect();
+        assert_eq!(agent_ids, vec!["a1"]);
     }
 
     #[test]
