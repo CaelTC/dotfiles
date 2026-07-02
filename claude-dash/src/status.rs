@@ -79,14 +79,14 @@ fn render(budget: Option<&Budget>) -> String {
         );
     };
 
-    // Headline = the Representative (binding) Window's Utilization, coloured by
-    // the account-wide severity for that window — mirrors the dashboard.
+    // Headline = the Representative (binding) Window's Utilization. The title %
+    // stays white regardless of severity (dropdown lines still carry severity
+    // colour); severity is conveyed by the dashboard, not the menu-bar number.
     let (rep_util, _) = b.window(b.representative());
     let title = format!(
-        "{}% | image={} width={s} height={s} color={}\n",
+        "{}% | image={} width={s} height={s} color=white\n",
         budget::percent(rep_util),
         splash_icon(),
-        swiftbar_color(b.severity(rep_util)),
         s = SPLASH_ICON_POINTS,
     );
 
