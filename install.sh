@@ -3,6 +3,7 @@ set -euo pipefail
 
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKUP_DIR="$DOTFILES_DIR/.backup/$(date +%Y%m%d_%H%M%S)"
+OS="$(uname -s)"   # Darwin | Linux
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -12,6 +13,22 @@ NC='\033[0m'
 info()    { echo -e "${GREEN}[✓]${NC} $*"; }
 warn()    { echo -e "${YELLOW}[!]${NC} $*"; }
 error()   { echo -e "${RED}[✗]${NC} $*"; }
+
+# brew on macOS, native package manager on Linux
+pkg_install() {
+  if [ "$OS" = "Darwin" ]; then
+    brew install "$@"
+  elif command -v apt-get &>/dev/null; then
+    sudo apt-get install -y "$@"
+  elif command -v dnf &>/dev/null; then
+    sudo dnf install -y "$@"
+  elif command -v pacman &>/dev/null; then
+    sudo pacman -S --needed --noconfirm "$@"
+  else
+    error "No supported package manager — install manually: $*"
+    return 1
+  fi
+}
 
 symlink() {
   local src="$1"
@@ -46,16 +63,20 @@ echo "Installing dotfiles from $DOTFILES_DIR"
 echo "────────────────────────────────────────"
 echo ""
 
-# ── Homebrew ─────────────────────────────────────────────────────────────────
-if ! command -v brew &>/dev/null; then
-  info "Installing Homebrew..."
-  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-else
-  info "Homebrew already installed"
+# ── Homebrew (macOS only) ────────────────────────────────────────────────────
+if [ "$OS" = "Darwin" ]; then
+  if ! command -v brew &>/dev/null; then
+    info "Installing Homebrew..."
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  else
+    info "Homebrew already installed"
+  fi
 fi
 
 # ── Ghostty ──────────────────────────────────────────────────────────────────
-if ! command -v ghostty &>/dev/null; then
+if [ "$OS" != "Darwin" ]; then
+  info "Skipping Ghostty install (GUI terminal, macOS cask only)"
+elif ! command -v ghostty &>/dev/null; then
   info "Installing Ghostty..."
   brew install --cask ghostty
 else
@@ -63,6 +84,16 @@ else
 fi
 
 symlink "$DOTFILES_DIR/ghostty/config" "$HOME/.config/ghostty/config"
+
+# ── Node/npm (needed for Claude Code + axi tools) ────────────────────────────
+if ! command -v npm &>/dev/null; then
+  info "Installing node/npm..."
+  if [ "$OS" = "Darwin" ]; then pkg_install node; else pkg_install nodejs npm; fi
+fi
+if [ "$OS" = "Linux" ] && [ ! -w "$(npm config get prefix)" ]; then
+  # ponytail: system node's global prefix (/usr) needs sudo; ~/.local/bin is already on PATH
+  npm config set prefix "$HOME/.local"
+fi
 
 # ── Claude Code ──────────────────────────────────────────────────────────────
 if ! command -v claude &>/dev/null; then
@@ -117,7 +148,7 @@ done
 # ── Neovim ───────────────────────────────────────────────────────────────────
 if ! command -v nvim &>/dev/null; then
   info "Installing Neovim..."
-  brew install neovim
+  pkg_install neovim
 else
   info "Neovim already installed"
 fi
@@ -150,6 +181,50 @@ if ! command -v cargo &>/dev/null; then
 else
   info "Installing wt..."
   cargo install --path "$DOTFILES_DIR/wt" --quiet
+fi
+
+# ── Remote fleet: tailscale + tmux + skiff ───────────────────────────────────
+if ! command -v tmux &>/dev/null; then
+  info "Installing tmux..."
+  pkg_install tmux
+else
+  info "tmux already installed"
+fi
+
+if ! command -v tailscale &>/dev/null; then
+  info "Installing tailscale (tailscaled)..."
+  if [ "$OS" = "Darwin" ]; then
+    # Formula (tailscaled) variant, NOT the cask — the GUI app can't run the
+    # Tailscale SSH server on macOS.
+    brew install tailscale
+  else
+    # Official installer: handles all distros, enables + starts tailscaled.
+    curl -fsSL https://tailscale.com/install.sh | sh
+  fi
+else
+  info "tailscale already installed"
+fi
+
+if tailscale status &>/dev/null; then
+  if tailscale set --ssh &>/dev/null; then
+    info "Tailscale SSH enabled"
+  else
+    warn "Could not enable Tailscale SSH — run: tailscale up --ssh"
+  fi
+else
+  warn "tailscaled not running. Start it and join the tailnet with SSH enabled:"
+  if [ "$OS" = "Darwin" ]; then
+    warn "  sudo brew services start tailscale && tailscale up --ssh"
+  else
+    warn "  sudo systemctl enable --now tailscaled && sudo tailscale up --ssh"
+  fi
+fi
+
+if ! command -v cargo &>/dev/null; then
+  warn "Rust/cargo not found — skipping skiff install. Install Rust from https://rustup.rs and re-run."
+else
+  info "Installing skiff..."
+  cargo install --path "$DOTFILES_DIR/skiff" --quiet
 fi
 
 # ── Bash ─────────────────────────────────────────────────────────────────────

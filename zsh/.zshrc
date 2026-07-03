@@ -3,9 +3,13 @@ alias g="git"
 # auto through to claude behind the capture proxy). No alias — an alias would
 # shadow the wrapper and silently disable dashboard capture.
 
-eval "$(starship init zsh)"
-source $(brew --prefix)/share/zsh-autosuggestions/zsh-autosuggestions.zsh
-PQ_LIB_DIR="$(brew --prefix libpq)/lib"
+command -v starship >/dev/null && eval "$(starship init zsh)"
+if command -v brew >/dev/null; then
+  source "$(brew --prefix)/share/zsh-autosuggestions/zsh-autosuggestions.zsh"
+  PQ_LIB_DIR="$(brew --prefix libpq)/lib"
+elif [ -f /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh ]; then
+  source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh
+fi
 
 export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
 # ponytail: lazy-load nvm — eager load was ~400ms/shell (the startup hang).
@@ -17,16 +21,22 @@ npm()  { _load_nvm; npm "$@"; }
 npx()  { _load_nvm; npx "$@"; }
 
 
-export LDFLAGS="-L/opt/homebrew/opt/openssl@1.1/lib"
-export CPPFLAGS="-I/opt/homebrew/opt/openssl@1.1/include"
-
-
-export LDFLAGS="-L/opt/homebrew/opt/llvm/lib"
-export CPPFLAGS="-I/opt/homebrew/opt/llvm/include"
-export PATH="/opt/homebrew/bin:$PATH"
-export PATH="/opt/homebrew/sbin:$PATH"
+if [ -d /opt/homebrew ]; then
+  export LDFLAGS="-L/opt/homebrew/opt/llvm/lib"
+  export CPPFLAGS="-I/opt/homebrew/opt/llvm/include"
+  export PATH="/opt/homebrew/bin:$PATH"
+  export PATH="/opt/homebrew/sbin:$PATH"
+fi
 export PATH="$HOME/.cargo/bin:$PATH"
 export PATH="$HOME/.local/bin:$PATH"
+
+# Inbound ssh sessions land in a persistent tmux session: disconnects don't
+# kill work, and reconnecting (ssh or skiff) resumes where you left off.
+# $TMUX guard stops recursion once inside tmux.
+if [[ -o interactive && -n "$SSH_TTY" && -z "$TMUX" ]] && command -v tmux >/dev/null; then
+  exec tmux new-session -A -s main
+fi
+
 cd() {
     if [[ $1 =~ '^\.{3,}$' ]]; then
         local dots=${#1}
@@ -39,7 +49,7 @@ cd() {
         builtin cd "$@" && ls -C
     fi
 }
-eval "$(mise activate zsh)"
+command -v mise >/dev/null && eval "$(mise activate zsh)"
 
 # initialize completion system (must run before sourcing completion files)
 autoload -Uz compinit && compinit
