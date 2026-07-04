@@ -5,8 +5,9 @@
 //   skiff ssh <host> [session]        ssh in, attach-or-create tmux session (default: main)
 //   skiff claude <host> <dir> [-s name] [-- <claude args>]
 //                                     start claude in a detached tmux session on <host>
-//   skiff setup <host> --user <user> [--nick <nick>]
-//                                     persist a nickname + user into ~/.ssh/config
+//   skiff setup <host> [--user <user>] [--nick <nick>]
+//                                     interactively persist a nickname + user
+//                                     into ~/.ssh/config (flags skip prompts)
 //
 // Every entry point lands in a named tmux session on the remote machine, so
 // work survives disconnects and you can reattach later — via `skiff ssh` or a
@@ -50,14 +51,16 @@ usage:
   skiff claude <host> <dir> [-s name] [-- <claude args>]
                                                start claude in a detached tmux session
                                                (session name defaults to the dir basename)
-  skiff setup <host> --user <user> [--nick <nick>]
-                                               persist a nickname + user into ~/.ssh/config
-                                               (nick defaults to host's first DNS label)
+  skiff setup <host> [--user <user>] [--nick <nick>]
+                                               interactively persist a nickname + user
+                                               into ~/.ssh/config (prompts for anything
+                                               not passed as a flag)
 
 examples:
   skiff claude work-mac ~/dev/api -- \"fix the failing tests\"
   skiff ssh work-mac api                       # attach to that session later
-  skiff setup work-mac --user cael --nick wm   # then: ssh wm
+  skiff setup work-mac                         # prompts for user + nickname
+  skiff setup work-mac --user cael --nick wm   # non-interactive
 ";
 
 fn tailnet() -> Result<serde_json::Value> {
@@ -229,12 +232,36 @@ fn setup(args: &[String]) -> Result<()> {
             _ => bail!("unexpected argument: {a}\n\n{USAGE}"),
         }
     }
-    let host = host.context("usage: skiff setup <host> --user <user> [--nick <nick>]")?;
-    let user = user.context("usage: skiff setup <host> --user <user> [--nick <nick>]")?;
-    let nick = nick.unwrap_or_else(|| host.split('.').next().unwrap_or(&host).to_string());
+    let host = host.context("usage: skiff setup <host> [--user <user>] [--nick <nick>]")?;
+    let default_nick = host.split('.').next().unwrap_or(&host).to_string();
 
     let ip = resolve(&host)?;
+
+    // Interactive unless both overrides were passed on the command line.
+    let (user, nick, interactive) = match (user, nick) {
+        (Some(u), Some(n)) => (u, n, false),
+        (user, nick) => {
+            println!("skiff: {host} -> {ip}");
+            let user = match user {
+                Some(u) => u,
+                None => prompt_required("username")?,
+            };
+            let nick = match nick {
+                Some(n) => n,
+                None => prompt_with_default("nickname", &default_nick)?,
+            };
+            (user, nick, true)
+        }
+    };
+
     let block = ssh_config_block(&nick, &ip, &user);
+    if interactive {
+        print!("{block}");
+        if !confirm("write this to ~/.ssh/config?")? {
+            println!("skiff: aborted, nothing written");
+            return Ok(());
+        }
+    }
 
     let path = std::env::var("HOME").context("HOME not set")? + "/.ssh/config";
     let existing = fs::read_to_string(&path).unwrap_or_default();
@@ -245,6 +272,36 @@ fn setup(args: &[String]) -> Result<()> {
     println!("skiff: wrote Host {nick} ({user}@{ip}) to {path}");
     println!("connect with: ssh {nick}");
     Ok(())
+}
+
+fn read_line(prompt: &str) -> Result<String> {
+    use std::io::Write;
+    print!("{prompt}");
+    std::io::stdout().flush()?;
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    Ok(line.trim().to_string())
+}
+
+fn prompt_required(label: &str) -> Result<String> {
+    loop {
+        let line = read_line(&format!("{label}: "))?;
+        if !line.is_empty() {
+            return Ok(line);
+        }
+        eprintln!("{label} cannot be empty");
+    }
+}
+
+fn prompt_with_default(label: &str, default: &str) -> Result<String> {
+    let line = read_line(&format!("{label} [{default}]: "))?;
+    Ok(if line.is_empty() { default.to_string() } else { line })
+}
+
+// Default "N" on empty input, consistent with the (y/N) convention shown to the user.
+fn confirm(label: &str) -> Result<bool> {
+    let line = read_line(&format!("{label} (y/N): "))?;
+    Ok(matches!(line.as_str(), "y" | "Y" | "yes"))
 }
 
 fn ssh_config_block(nick: &str, ip: &str, user: &str) -> String {
