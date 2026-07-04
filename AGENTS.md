@@ -23,6 +23,14 @@ firstmate) can use it to run Claude sessions on other machines:
   <nick>` markers and replaced in place on re-run. Passing both `--user` and
   `--nick` skips all prompts for non-interactive/scripted use.
 
+All verbs resolve a `<host>` argument through `resolve()`, which checks
+`~/.ssh/config` for a matching `Host` entry *before* falling back to the
+tailnet lookup — so a `skiff setup`-written nickname (including one that
+collides with a real tailscale machine name) is honored verbatim and gets
+its configured `User`, rather than being resolved to a bare tailscale IP that
+drops the user and connects as the local account. An explicit `user@name`
+still overrides the config's `User`, matching ssh's own precedence.
+
 Names resolve via `tailscale status --json` to tailscale IPs, so MagicDNS in
 the system resolver is not required. Each machine needs `install.sh` run on it
 — works on macOS (brew) and Linux (apt/dnf/pacman + official tailscale
