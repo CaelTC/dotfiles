@@ -14,6 +14,12 @@ firstmate) can use it to run Claude sessions on other machines:
   session on that machine (named after the dir; survives disconnect)
 - `skiff ssh <host> [session]` — attach to a session interactively
 - `skiff sessions <host>` — list tmux sessions on a machine
+- `skiff setup <host> --user <user> [--nick <nick>]` — persist a `Host <nick>`
+  block (HostName = resolved tailscale IP, User = `<user>`) into
+  `~/.ssh/config`, so `ssh <nick>` connects as the right user. Idempotent: the
+  block is wrapped in `# >>> skiff <nick>` / `# <<< skiff <nick>` markers and
+  replaced in place on re-run. `--nick` defaults to `<host>`'s first DNS
+  label.
 
 Names resolve via `tailscale status --json` to tailscale IPs, so MagicDNS in
 the system resolver is not required. Each machine needs `install.sh` run on it
