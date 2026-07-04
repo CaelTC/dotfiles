@@ -135,10 +135,12 @@ else
 fi
 
 # ── Claude agent tools (axi) ─────────────────────────────────────────────────
+export PATH="$(npm prefix -g)/bin:$PATH"
 for pkg in lavish-axi gh-axi chrome-devtools-axi tasks-axi; do
   if ! command -v "$pkg" &>/dev/null; then
     info "Installing $pkg..."
     npm install -g "$pkg"
+    hash -r
   else
     info "$pkg already installed"
   fi
