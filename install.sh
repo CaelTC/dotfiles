@@ -144,7 +144,9 @@ for pkg in lavish-axi gh-axi chrome-devtools-axi tasks-axi; do
   else
     info "$pkg already installed"
   fi
-  "$pkg" setup hooks
+  # SessionStart hooks only for the cheap dynamic-status tools; lavish-axi and
+  # chrome-devtools-axi cost ~2k tokens/session and are reachable via their skills.
+  case "$pkg" in gh-axi|tasks-axi) "$pkg" setup hooks ;; esac
 done
 
 # ── Neovim ───────────────────────────────────────────────────────────────────
@@ -176,14 +178,6 @@ fi
 
 info "Running ssh-ls installer..."
 "$DOTFILES_DIR/ssh-ls/install.sh"
-
-# ── wt ───────────────────────────────────────────────────────────────────────
-if ! command -v cargo &>/dev/null; then
-  warn "Rust/cargo not found — skipping wt install. Install Rust from https://rustup.rs and re-run."
-else
-  info "Installing wt..."
-  cargo install --path "$DOTFILES_DIR/wt" --quiet
-fi
 
 # ── Remote fleet: tailscale + tmux + skiff ───────────────────────────────────
 if ! command -v tmux &>/dev/null; then
