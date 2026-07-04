@@ -14,9 +14,10 @@
 // plain `tmux attach` on the machine itself.
 
 use std::fs;
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 
@@ -144,8 +145,43 @@ fn ls() -> Result<()> {
     Ok(())
 }
 
+// Best-effort push of the local TERM's terminfo to the remote, so a remote
+// tmux/ssh doesn't reject an unusual local TERM (e.g. xterm-ghostty) that it
+// has no terminfo entry for. Never blocks or fails the caller: missing
+// infocmp/tic, a dead ssh, non-zero exits — all swallowed.
+fn ensure_remote_terminfo(target: &str) {
+    let Ok(term) = std::env::var("TERM") else { return };
+    if !term_is_usable(&term) {
+        return;
+    }
+    let Ok(infocmp) = Command::new("infocmp").args(["-x", "--", &term]).output() else { return };
+    if !infocmp.status.success() {
+        return;
+    }
+    let Ok(mut child) = Command::new("ssh")
+        .arg(target)
+        .arg("tic -x - 2>/dev/null")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return;
+    };
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(&infocmp.stdout);
+    }
+    let _ = child.wait();
+}
+
+// Empty TERM (unset or blank) short-circuits ensure_remote_terminfo.
+fn term_is_usable(term: &str) -> bool {
+    !term.is_empty()
+}
+
 fn sessions(host: &str) -> Result<()> {
     let target = resolve(host)?;
+    ensure_remote_terminfo(&target);
     let script = format!("{REMOTE_PATH} tmux ls 2>/dev/null || echo 'no tmux sessions'");
     let status = Command::new("ssh").arg(target).arg(script).status()?;
     if !status.success() {
@@ -156,6 +192,7 @@ fn sessions(host: &str) -> Result<()> {
 
 fn ssh(host: &str, session: &str) -> Result<()> {
     let target = resolve(host)?;
+    ensure_remote_terminfo(&target);
     let session = sanitize(session);
     let script = format!("{REMOTE_PATH} exec tmux new-session -A -s {}", quote(&session));
     // Replaces this process with ssh so the terminal is fully interactive.
@@ -213,6 +250,7 @@ fn claude(args: &[String]) -> Result<()> {
         quote(&cmd),
     );
     let target = resolve(&host)?;
+    ensure_remote_terminfo(&target);
     let status = Command::new("ssh").arg(&target).arg(script).status()?;
     if !status.success() {
         bail!("ssh {host} failed");
@@ -278,7 +316,6 @@ fn setup(args: &[String]) -> Result<()> {
 }
 
 fn read_line(prompt: &str) -> Result<String> {
-    use std::io::Write;
     print!("{prompt}");
     std::io::stdout().flush()?;
     let mut line = String::new();
@@ -431,5 +468,11 @@ mod tests {
     #[test]
     fn config_has_host_empty_is_false() {
         assert!(!config_has_host("", "wm"));
+    }
+
+    #[test]
+    fn term_is_usable_rejects_empty() {
+        assert!(!term_is_usable(""));
+        assert!(term_is_usable("xterm-ghostty"));
     }
 }
