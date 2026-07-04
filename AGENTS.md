@@ -9,11 +9,26 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 `skiff/` is a Rust CLI that ferries between tailscale machines. Agents (e.g.
 firstmate) can use it to run Claude sessions on other machines:
 
-- `skiff ls` — list machines on the tailnet
-- `skiff claude <host> <dir> -- "<prompt>"` — start claude in a detached tmux
-  session on that machine (named after the dir; survives disconnect)
+- `skiff ls [--json]` — list machines on the tailnet; `--json` emits
+  `[{"name","ip","os","online","self"}]`
+- `skiff claude <host> <dir> [--json] -- "<prompt>"` — start claude in a
+  detached tmux session on that machine (named after the dir; survives
+  disconnect). Checks that tmux + claude exist on the remote first and bails
+  naming the missing tool; `--json` emits
+  `{"host","session","status":"started"|"already-running","attach_cmd"}`
+- `skiff exec <host> -- <cmd...>` — run a one-off command on the machine
+  (ssh BatchMode, output passed through, exits with the remote command's exit
+  code) — prefer this over raw ssh
 - `skiff ssh <host> [session]` — attach to a session interactively
-- `skiff sessions <host>` — list tmux sessions on a machine
+- `skiff sessions <host> [--json]` — list tmux sessions on a machine; `--json`
+  emits `[{"name","created","windows","attached","pane_command","pane_dead"}]`
+  (`pane_command` tells an agent whether claude is still running; `[]` when
+  there are no sessions)
+- `skiff logs <host> <session> [-n N]` — print the last N lines (default 200)
+  of the session's pane, plain text, no ansi escapes; errors if the session
+  doesn't exist
+- `skiff kill <host> <session>` — kill a tmux session; errors if it doesn't
+  exist
 - `skiff setup <host> [--user <user>] [--nick <nick>]` — interactively prompts
   for the SSH username and nickname (nickname defaults to `<host>`'s first DNS
   label on empty input), shows the resulting block, and confirms before
