@@ -37,3 +37,13 @@ the system resolver is not required. Each machine needs `install.sh` run on it
 installer); installs tmux + tailscaled and enables Tailscale SSH. Inbound ssh
 shells auto-attach to a persistent `main` tmux session via `zsh/.zshrc` on
 macOS and `bash/.bashrc` on Linux (bash is the default login shell there).
+
+`ssh()`, `claude()`, and `sessions()` each call `ensure_remote_terminfo(&target)`
+right after resolving the target and before running the remote tmux/command.
+It best-effort pipes `infocmp -x -- "$TERM"` into `ssh <target> 'tic -x -'` so
+an unusual local `TERM` (e.g. Ghostty's `xterm-ghostty`) has a terminfo entry
+on the remote — without that, remote `tmux`/`ssh -t` reject the TERM outright.
+Every failure (missing `infocmp`/`tic`, dead ssh, non-zero exit, empty `TERM`)
+is swallowed; it never blocks or fails the actual connect, and it never forces
+`TERM` to a fallback like `xterm-256color` (that would downgrade Ghostty on
+remotes that just need the terminfo pushed).
