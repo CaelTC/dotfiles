@@ -5,11 +5,16 @@
 //   skiff ssh <host> [session]        ssh in, attach-or-create tmux session (default: main)
 //   skiff claude <host> <dir> [-s name] [-- <claude args>]
 //                                     start claude in a detached tmux session on <host>
+//   skiff setup <host> [--user <user>] [--nick <nick>]
+//                                     interactively persist a nickname + user
+//                                     into ~/.ssh/config (flags skip prompts)
 //
 // Every entry point lands in a named tmux session on the remote machine, so
 // work survives disconnects and you can reattach later — via `skiff ssh` or a
 // plain `tmux attach` on the machine itself.
 
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 
@@ -29,6 +34,7 @@ fn main() -> Result<()> {
             args.get(2).map(String::as_str).unwrap_or("main"),
         ),
         Some("claude") => claude(&args[1..]),
+        Some("setup") => setup(&args[1..]),
         _ => {
             eprint!("{}", USAGE);
             std::process::exit(2);
@@ -45,10 +51,16 @@ usage:
   skiff claude <host> <dir> [-s name] [-- <claude args>]
                                                start claude in a detached tmux session
                                                (session name defaults to the dir basename)
+  skiff setup <host> [--user <user>] [--nick <nick>]
+                                               interactively persist a nickname + user
+                                               into ~/.ssh/config (prompts for anything
+                                               not passed as a flag)
 
 examples:
   skiff claude work-mac ~/dev/api -- \"fix the failing tests\"
   skiff ssh work-mac api                       # attach to that session later
+  skiff setup work-mac                         # prompts for user + nickname
+  skiff setup work-mac --user cael --nick wm   # non-interactive
 ";
 
 fn tailnet() -> Result<serde_json::Value> {
@@ -206,6 +218,118 @@ fn claude(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn setup(args: &[String]) -> Result<()> {
+    let mut host = None;
+    let mut user = None;
+    let mut nick = None;
+
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--user" => user = Some(it.next().context("--user needs a value")?.clone()),
+            "--nick" => nick = Some(it.next().context("--nick needs a value")?.clone()),
+            _ if host.is_none() => host = Some(a.clone()),
+            _ => bail!("unexpected argument: {a}\n\n{USAGE}"),
+        }
+    }
+    let host = host.context("usage: skiff setup <host> [--user <user>] [--nick <nick>]")?;
+    let default_nick = host.split('.').next().unwrap_or(&host).to_string();
+
+    let ip = resolve(&host)?;
+
+    // Interactive unless both overrides were passed on the command line.
+    let (user, nick, interactive) = match (user, nick) {
+        (Some(u), Some(n)) => (u, n, false),
+        (user, nick) => {
+            println!("skiff: {host} -> {ip}");
+            let user = match user {
+                Some(u) => u,
+                None => prompt_required("username")?,
+            };
+            let nick = match nick {
+                Some(n) => n,
+                None => prompt_with_default("nickname", &default_nick)?,
+            };
+            (user, nick, true)
+        }
+    };
+
+    let block = ssh_config_block(&nick, &ip, &user);
+    if interactive {
+        print!("{block}");
+        if !confirm("write this to ~/.ssh/config?")? {
+            println!("skiff: aborted, nothing written");
+            return Ok(());
+        }
+    }
+
+    let path = std::env::var("HOME").context("HOME not set")? + "/.ssh/config";
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+    let updated = upsert_block(&existing, &nick, &block);
+    fs::write(&path, updated).with_context(|| format!("writing {path}"))?;
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+
+    println!("skiff: wrote Host {nick} ({user}@{ip}) to {path}");
+    println!("connect with: ssh {nick}");
+    Ok(())
+}
+
+fn read_line(prompt: &str) -> Result<String> {
+    use std::io::Write;
+    print!("{prompt}");
+    std::io::stdout().flush()?;
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    Ok(line.trim().to_string())
+}
+
+fn prompt_required(label: &str) -> Result<String> {
+    loop {
+        let line = read_line(&format!("{label}: "))?;
+        if !line.is_empty() {
+            return Ok(line);
+        }
+        eprintln!("{label} cannot be empty");
+    }
+}
+
+fn prompt_with_default(label: &str, default: &str) -> Result<String> {
+    let line = read_line(&format!("{label} [{default}]: "))?;
+    Ok(if line.is_empty() { default.to_string() } else { line })
+}
+
+// Default "N" on empty input, consistent with the (y/N) convention shown to the user.
+fn confirm(label: &str) -> Result<bool> {
+    let line = read_line(&format!("{label} (y/N): "))?;
+    Ok(matches!(line.as_str(), "y" | "Y" | "yes"))
+}
+
+fn ssh_config_block(nick: &str, ip: &str, user: &str) -> String {
+    format!("# >>> skiff {nick}\nHost {nick}\n    HostName {ip}\n    User {user}\n# <<< skiff {nick}\n")
+}
+
+// Replaces an existing "# >>> skiff <nick>" ... "# <<< skiff <nick>" block in
+// place, or appends the new block if no such block exists yet.
+fn upsert_block(existing: &str, nick: &str, block: &str) -> String {
+    let start_marker = format!("# >>> skiff {nick}");
+    let end_marker = format!("# <<< skiff {nick}");
+    if let Some(start) = existing.find(&start_marker)
+        && let Some(end_rel) = existing[start..].find(&end_marker)
+    {
+        let mut end = start + end_rel + end_marker.len();
+        if existing[end..].starts_with('\n') {
+            end += 1;
+        }
+        return format!("{}{}{}", &existing[..start], block, &existing[end..]);
+    }
+    let mut result = existing.to_string();
+    if !result.is_empty() && !result.ends_with('\n') {
+        result.push('\n');
+    }
+    result.push_str(block);
+    result
+}
+
 // tmux session names cannot contain '.' or ':'
 fn sanitize(name: &str) -> String {
     name.replace(['.', ':'], "-")
@@ -235,5 +359,33 @@ mod tests {
         assert_eq!(quote_path("~/dev/api"), "~/'dev/api'");
         assert_eq!(quote_path("/abs/path"), "'/abs/path'");
         assert_eq!(sanitize("my.proj:x"), "my-proj-x");
+    }
+
+    #[test]
+    fn upsert_block_appends_to_fresh_config() {
+        let block = ssh_config_block("wm", "100.1.2.3", "cael");
+        let out = upsert_block("", "wm", &block);
+        assert_eq!(out, block);
+    }
+
+    #[test]
+    fn upsert_block_appends_after_unrelated_host() {
+        let existing = "Host other\n    HostName 10.0.0.1\n    User bob\n";
+        let block = ssh_config_block("wm", "100.1.2.3", "cael");
+        let out = upsert_block(existing, "wm", &block);
+        assert_eq!(out, format!("{existing}{block}"));
+    }
+
+    #[test]
+    fn upsert_block_replaces_in_place_on_rerun() {
+        let block_v1 = ssh_config_block("wm", "100.1.2.3", "cael");
+        let existing = format!("Host other\n    HostName 10.0.0.1\n# comment\n{block_v1}Host another\n    HostName 10.0.0.2\n");
+        let block_v2 = ssh_config_block("wm", "100.9.9.9", "cael2");
+        let out = upsert_block(&existing, "wm", &block_v2);
+        assert_eq!(
+            out,
+            format!("Host other\n    HostName 10.0.0.1\n# comment\n{block_v2}Host another\n    HostName 10.0.0.2\n")
+        );
+        assert_eq!(out.matches("Host wm").count(), 1);
     }
 }
