@@ -17,7 +17,7 @@ firstmate) can use it to run Claude sessions on other machines:
 
 Names resolve via `tailscale status --json` to tailscale IPs, so MagicDNS in
 the system resolver is not required. Each machine needs `install.sh` run on it
-— works on macOS (brew) and Linux (apt/dnf/pacman + official tailscale
+— works on macOS (brew) and Linux (apt + official tailscale
 installer); installs tmux + tailscaled and enables Tailscale SSH. Inbound ssh
 shells auto-attach to a persistent `main` tmux session via `zsh/.zshrc` on
 macOS and `bash/.bashrc` on Linux (bash is the default login shell there).

@@ -14,18 +14,14 @@ info()    { echo -e "${GREEN}[✓]${NC} $*"; }
 warn()    { echo -e "${YELLOW}[!]${NC} $*"; }
 error()   { echo -e "${RED}[✗]${NC} $*"; }
 
-# brew on macOS, native package manager on Linux
+# brew on macOS, apt on Linux
 pkg_install() {
   if [ "$OS" = "Darwin" ]; then
     brew install "$@"
   elif command -v apt-get &>/dev/null; then
     sudo apt-get install -y "$@"
-  elif command -v dnf &>/dev/null; then
-    sudo dnf install -y "$@"
-  elif command -v pacman &>/dev/null; then
-    sudo pacman -S --needed --noconfirm "$@"
   else
-    error "No supported package manager — install manually: $*"
+    error "apt-get not found — install manually: $*"
     return 1
   fi
 }
