@@ -91,6 +91,9 @@ fn resolve(host: &str) -> Result<String> {
         Some((u, h)) => (Some(u), h),
         None => (None, host),
     };
+    if ssh_config_has_host(name) {
+        return Ok(host.to_string());
+    }
     let v = tailnet()?;
     let peers = v["Peer"].as_object().into_iter().flat_map(|m| m.values());
     for node in std::iter::once(&v["Self"]).chain(peers) {
@@ -304,6 +307,27 @@ fn confirm(label: &str) -> Result<bool> {
     Ok(matches!(line.as_str(), "y" | "Y" | "yes"))
 }
 
+// Exact-token match on `Host` lines in ~/.ssh/config; not a full implementation
+// of ssh's wildcard Host matching.
+fn ssh_config_has_host(name: &str) -> bool {
+    let path = match std::env::var("HOME") {
+        Ok(home) => home + "/.ssh/config",
+        Err(_) => return false,
+    };
+    match fs::read_to_string(&path) {
+        Ok(contents) => config_has_host(&contents, name),
+        Err(_) => false,
+    }
+}
+
+fn config_has_host(contents: &str, name: &str) -> bool {
+    contents
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("Host "))
+        .flat_map(|rest| rest.split_whitespace())
+        .any(|token| token == name)
+}
+
 fn ssh_config_block(nick: &str, ip: &str, user: &str) -> String {
     format!("# >>> skiff {nick}\nHost {nick}\n    HostName {ip}\n    User {user}\n# <<< skiff {nick}\n")
 }
@@ -387,5 +411,25 @@ mod tests {
             format!("Host other\n    HostName 10.0.0.1\n# comment\n{block_v2}Host another\n    HostName 10.0.0.2\n")
         );
         assert_eq!(out.matches("Host wm").count(), 1);
+    }
+
+    #[test]
+    fn config_has_host_matches_exact_token() {
+        let cfg = "Host other\n    HostName 10.0.0.1\nHost wm\n    HostName 100.1.2.3\n";
+        assert!(config_has_host(cfg, "wm"));
+        assert!(!config_has_host(cfg, "unrelated"));
+    }
+
+    #[test]
+    fn config_has_host_matches_any_token_on_multi_host_line() {
+        let cfg = "Host wm work-mac\n    HostName 100.1.2.3\n";
+        assert!(config_has_host(cfg, "wm"));
+        assert!(config_has_host(cfg, "work-mac"));
+        assert!(!config_has_host(cfg, "work"));
+    }
+
+    #[test]
+    fn config_has_host_empty_is_false() {
+        assert!(!config_has_host("", "wm"));
     }
 }
