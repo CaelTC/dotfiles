@@ -159,6 +159,8 @@ fn ensure_remote_terminfo(target: &str) {
         return;
     }
     let Ok(mut child) = Command::new("ssh")
+        // BatchMode so a key passphrase prompt can't hang the prober on stdin.
+        .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
         .arg(target)
         .arg("tic -x - 2>/dev/null")
         .stdin(Stdio::piped())
@@ -171,6 +173,19 @@ fn ensure_remote_terminfo(target: &str) {
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(&infocmp.stdout);
     }
+    // Hard wall-clock cap: a host stuck at a Tailscale SSH auth prompt blocks
+    // here forever (ConnectTimeout only bounds TCP, not the auth wait), which
+    // would swallow the auth URL — kill the prober so the real connect right
+    // after can run and surface that URL for the user to click. ~4s ceiling;
+    // try_wait polling avoids pulling in a timer dependency.
+    for _ in 0..40 {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+            Err(_) => return,
+        }
+    }
+    let _ = child.kill();
     let _ = child.wait();
 }
 

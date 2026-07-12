@@ -14,11 +14,13 @@ fi
 export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
 # ponytail: lazy-load nvm — eager load was ~400ms/shell (the startup hang).
 # First node/npm/npx/nvm call sources nvm.sh, then runs the real command.
-_load_nvm() { unset -f nvm node npm npx _load_nvm; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"; }
-nvm()  { _load_nvm; nvm "$@"; }
-node() { _load_nvm; node "$@"; }
-npm()  { _load_nvm; npm "$@"; }
-npx()  { _load_nvm; npx "$@"; }
+# Loader is inlined in each wrapper (no shared helper): harnesses that snapshot
+# shell functions can drop a helper while keeping the wrappers, which left npm()
+# calling itself until FUNCNEST. Self-unset first ⇒ worst case falls back to PATH.
+nvm()  { unset -f nvm node npm npx 2>/dev/null; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"; nvm "$@"; }
+node() { unset -f nvm node npm npx 2>/dev/null; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"; node "$@"; }
+npm()  { unset -f nvm node npm npx 2>/dev/null; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"; npm "$@"; }
+npx()  { unset -f nvm node npm npx 2>/dev/null; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"; npx "$@"; }
 
 
 if [ -d /opt/homebrew ]; then

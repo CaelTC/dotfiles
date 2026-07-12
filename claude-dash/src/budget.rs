@@ -129,6 +129,23 @@ impl Budget {
         }
     }
 
+    /// A window's **Utilization** as it stands at `now_epoch` (seconds): the
+    /// stored fraction, or `0` once the window's reset has passed. Anthropic
+    /// reports **Utilization** for the *current* window, so once wall-clock
+    /// crosses the stored reset the old fraction is stale — the window has rolled
+    /// over to empty. We zero it locally rather than wait for the next response to
+    /// carry the fresh reading, so an idle account's gauge drops at the reset time
+    /// instead of hanging at its last value. A missing reset (`<= 0`) is left
+    /// as-is — there's no boundary to have crossed.
+    pub fn util_at(&self, window: Window, now_epoch: i64) -> f64 {
+        let (util, reset) = self.window(window);
+        if reset > 0 && now_epoch >= reset {
+            0.0
+        } else {
+            util
+        }
+    }
+
     /// The **Severity** of a window, driven by the unified `status` *and* the
     /// window's **Utilization** — the single place Budget coloring is decided
     /// (subsuming the old utilization-only threshold).
@@ -359,6 +376,27 @@ mod tests {
         // Unknown / empty claim defaults to the 5-hour window.
         assert_eq!(budget_with("", "allowed", 0.0).representative(), Window::FiveHour);
         assert_eq!(budget_with("weird", "allowed", 0.0).representative(), Window::FiveHour);
+    }
+
+    #[test]
+    fn util_at_zeroes_a_window_once_its_reset_has_passed() {
+        let b = Budget {
+            b5_util: 0.8,
+            b5_reset: 1_000,
+            b7_util: 0.3,
+            b7_reset: 2_000,
+            ..Default::default()
+        };
+        // Before the reset: the stored fraction stands.
+        assert_eq!(b.util_at(Window::FiveHour, 999), 0.8);
+        // At and after the reset: zeroed locally, no fresh reading needed.
+        assert_eq!(b.util_at(Window::FiveHour, 1_000), 0.0);
+        assert_eq!(b.util_at(Window::FiveHour, 1_500), 0.0);
+        // Independent per window: 7d still stands while its later reset is future.
+        assert_eq!(b.util_at(Window::SevenDay, 1_500), 0.3);
+        // A missing reset (0) has no boundary to cross ⇒ left as-is.
+        let no_reset = Budget { b5_util: 0.5, b5_reset: 0, ..Default::default() };
+        assert_eq!(no_reset.util_at(Window::FiveHour, 9_999), 0.5);
     }
 
     #[test]

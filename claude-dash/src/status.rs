@@ -53,23 +53,25 @@ fn splash_icon() -> &'static str {
 /// even when there's no data yet.
 pub fn run() -> Result<()> {
     let dir = store::sessions_dir()?;
-    print!("{}", render_dir(&dir));
+    print!("{}", render_dir(&dir, Local::now().timestamp()));
     Ok(())
 }
 
 /// Read the newest **Budget** from a store `dir` and format the SwiftBar output.
 /// Split from [`render`] so a fixture store dir can drive it end-to-end (store
 /// selection + formatting) in one test.
-fn render_dir(dir: &Path) -> String {
+fn render_dir(dir: &Path, now_epoch: i64) -> String {
     let views = store::session_views_in_dir(dir);
     let budget = store::newest_req_in_views(&views).map(|req| req.budget.clone());
-    render(budget.as_ref())
+    render(budget.as_ref(), now_epoch)
 }
 
-/// Format the SwiftBar output for an optional **Budget**. Pure over its input so
-/// it's unit-testable without touching the filesystem. Resets are formatted as
-/// absolute local times from the stored epochs, so no wall-clock is needed.
-fn render(budget: Option<&Budget>) -> String {
+/// Format the SwiftBar output for an optional **Budget** as of `now_epoch`
+/// (seconds). Pure over its inputs so it's unit-testable without touching the
+/// filesystem. Reset *times* are formatted from the stored epochs; `now_epoch` is
+/// only needed to zero a window whose reset has already passed (see
+/// [`Budget::util_at`]).
+fn render(budget: Option<&Budget>, now_epoch: i64) -> String {
     let Some(b) = budget else {
         // No-data path: benign title + one dropdown line, still exit 0.
         return format!(
@@ -82,7 +84,7 @@ fn render(budget: Option<&Budget>) -> String {
     // Headline = the Representative (binding) Window's Utilization. The title %
     // stays white regardless of severity (dropdown lines still carry severity
     // colour); severity is conveyed by the dashboard, not the menu-bar number.
-    let (rep_util, _) = b.window(b.representative());
+    let rep_util = b.util_at(b.representative(), now_epoch);
     let title = format!(
         "{}% | image={} width={s} height={s} color=white\n",
         budget::percent(rep_util),
@@ -92,8 +94,10 @@ fn render(budget: Option<&Budget>) -> String {
 
     // Dropdown: both windows with their % and reset, each coloured by its own
     // severity (same per-window palette as the dashboard rail).
-    let (b5_util, b5_reset) = b.window(Window::FiveHour);
-    let (b7_util, b7_reset) = b.window(Window::SevenDay);
+    let (_, b5_reset) = b.window(Window::FiveHour);
+    let (_, b7_reset) = b.window(Window::SevenDay);
+    let b5_util = b.util_at(Window::FiveHour, now_epoch);
+    let b7_util = b.util_at(Window::SevenDay, now_epoch);
     let five = window_line("5-hour", b5_util, b5_reset, b.severity(b5_util), reset_time);
     let seven = window_line("7-day", b7_util, b7_reset, b.severity(b7_util), reset_weekday);
 
@@ -191,7 +195,8 @@ mod tests {
         let b = session_path(dir.path(), "bbbb");
         append_record(&b, &req(400, &budget("seven_day", 0.20, 0.33))).unwrap();
 
-        let out = render_dir(dir.path());
+        // `now` before both fixture resets (1.75e9), so no window is zeroed here.
+        let out = render_dir(dir.path(), 1_700_000_000);
         let title = out.lines().next().unwrap();
 
         // Newest record wins (ts 400), and its Representative Window is 7-day →
@@ -214,7 +219,7 @@ mod tests {
     #[test]
     fn no_data_prints_benign_title_and_still_formats() {
         let dir = tempfile::tempdir().unwrap();
-        let out = render_dir(dir.path());
+        let out = render_dir(dir.path(), 1_700_000_000);
         assert!(out.starts_with("—"), "out was {out:?}");
         assert!(out.contains("image="), "out was {out:?}");
         assert!(!out.contains("templateImage="), "out was {out:?}");
@@ -223,6 +228,21 @@ mod tests {
             "no-data title must pin the menu-bar icon size too, was {out:?}"
         );
         assert!(out.contains("no usage data yet"));
+    }
+
+    /// Once a window's reset has passed, its Utilization reads 0 without any fresh
+    /// reading — the idle-account case the whole feature exists for. Same fixture
+    /// budget (5h=42%, 7d=10%, rep=five_hour), rendered with `now` *after* the
+    /// 5-hour reset but *before* the 7-day reset: the headline and 5-hour line drop
+    /// to 0%, the 7-day line still shows its stored 10%.
+    #[test]
+    fn windows_read_zero_once_their_reset_has_passed() {
+        let b = budget("five_hour", 0.42, 0.10); // b5_reset=1.75e9, b7_reset=1.7505e9
+        let out = render(Some(&b), 1_750_000_001);
+        let title = out.lines().next().unwrap();
+        assert!(title.starts_with("0%"), "5h reset passed → headline 0%, was {title:?}");
+        assert!(out.contains("5-hour  0%"), "5h line zeroed, was {out:?}");
+        assert!(out.contains("7-day  10%"), "7d not yet reset, was {out:?}");
     }
 
     /// The embedded icon must round-trip: SwiftBar silently renders NO icon for
