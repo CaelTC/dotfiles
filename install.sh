@@ -111,6 +111,9 @@ symlink "$DOTFILES_DIR/claude/agents" "$HOME/.claude/agents"
 if ! command -v cargo &>/dev/null; then
   warn "Rust/cargo not found — skipping claude-dash install. Install Rust from https://rustup.rs and re-run."
 else
+  # cca/ccagent have a zsh shebang (and use zsh-only syntax); Linux boxes
+  # default to bash and may ship without it.
+  command -v zsh &>/dev/null || { info "Installing zsh (cca/ccagent need it)..."; pkg_install zsh; }
   info "Building claude-dash (release)..."
   cargo build --release --manifest-path "$DOTFILES_DIR/claude-dash/Cargo.toml" --quiet
   symlink "$DOTFILES_DIR/claude-dash/target/release/claude-dash" "$HOME/.local/bin/claude-dash"
@@ -144,7 +147,9 @@ for pkg in lavish-axi gh-axi chrome-devtools-axi tasks-axi; do
   else
     info "$pkg already installed"
   fi
-  "$pkg" setup hooks
+  # SessionStart hooks only for the cheap dynamic-status tools; lavish-axi and
+  # chrome-devtools-axi cost ~2k tokens/session and are reachable via their skills.
+  case "$pkg" in gh-axi|tasks-axi) "$pkg" setup hooks ;; esac
 done
 
 # ── Neovim ───────────────────────────────────────────────────────────────────
@@ -176,14 +181,6 @@ fi
 
 info "Running ssh-ls installer..."
 "$DOTFILES_DIR/ssh-ls/install.sh"
-
-# ── wt ───────────────────────────────────────────────────────────────────────
-if ! command -v cargo &>/dev/null; then
-  warn "Rust/cargo not found — skipping wt install. Install Rust from https://rustup.rs and re-run."
-else
-  info "Installing wt..."
-  cargo install --path "$DOTFILES_DIR/wt" --quiet
-fi
 
 # ── Remote fleet: tailscale + tmux + skiff ───────────────────────────────────
 if ! command -v tmux &>/dev/null; then
