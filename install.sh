@@ -111,6 +111,9 @@ symlink "$DOTFILES_DIR/claude/agents" "$HOME/.claude/agents"
 if ! command -v cargo &>/dev/null; then
   warn "Rust/cargo not found — skipping claude-dash install. Install Rust from https://rustup.rs and re-run."
 else
+  # cca/ccagent have a zsh shebang (and use zsh-only syntax); Linux boxes
+  # default to bash and may ship without it.
+  command -v zsh &>/dev/null || { info "Installing zsh (cca/ccagent need it)..."; pkg_install zsh; }
   info "Building claude-dash (release)..."
   cargo build --release --manifest-path "$DOTFILES_DIR/claude-dash/Cargo.toml" --quiet
   symlink "$DOTFILES_DIR/claude-dash/target/release/claude-dash" "$HOME/.local/bin/claude-dash"

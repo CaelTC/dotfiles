@@ -534,13 +534,17 @@ fn draw_budget_rail(frame: &mut Frame, area: Rect, budget: Option<&ReqRecord>, n
     ]));
     frame.render_widget(status_line, rows[0]);
 
+    // Utilization is read as-of `now`, so a window whose reset has passed reads 0
+    // even before a fresh reading arrives (see Budget::util_at).
+    let b5 = b.util_at(budget::Window::FiveHour, now_epoch);
+    let b7 = b.util_at(budget::Window::SevenDay, now_epoch);
     render_window(
         frame,
         rows[1],
         rows[2],
         "5h",
-        b.b5_util,
-        b.severity(b.b5_util),
+        b5,
+        b.severity(b5),
         b.b5_reset,
         now_epoch,
         rep_window == budget::Window::FiveHour,
@@ -550,8 +554,8 @@ fn draw_budget_rail(frame: &mut Frame, area: Rect, budget: Option<&ReqRecord>, n
         rows[4],
         rows[5],
         "7d",
-        b.b7_util,
-        b.severity(b.b7_util),
+        b7,
+        b.severity(b7),
         b.b7_reset,
         now_epoch,
         rep_window == budget::Window::SevenDay,
