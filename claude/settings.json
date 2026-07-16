@@ -13,7 +13,7 @@
       "Bash(cargo test *)"
     ]
   },
-  "model": "claude-fable-5[1m]",
+  "model": "fable",
   "hooks": {
     "SessionStart": [
       {
@@ -50,7 +50,8 @@
     "rust-analyzer-lsp@claude-plugins-official": true,
     "pyright-lsp@claude-plugins-official": true,
     "frontend-design@claude-plugins-official": true,
-    "ponytail@ponytail": true
+    "ponytail@ponytail": true,
+    "swift-lsp@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "claude-code-warp": {
