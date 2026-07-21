@@ -1,0 +1,3 @@
+# ponytail: only knob that matters — bump default 500ms timeout so transient
+# iCloud/FS stalls under ~/Documents don't print git-timed-out warnings.
+command_timeout = 2000
