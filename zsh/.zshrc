@@ -12,15 +12,9 @@ elif [ -f /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh ]; then
 fi
 
 export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
-# ponytail: lazy-load nvm — eager load was ~400ms/shell (the startup hang).
-# First node/npm/npx/nvm call sources nvm.sh, then runs the real command.
-# Loader is inlined in each wrapper (no shared helper): harnesses that snapshot
-# shell functions can drop a helper while keeping the wrappers, which left npm()
-# calling itself until FUNCNEST. Self-unset first ⇒ worst case falls back to PATH.
-nvm()  { unset -f nvm node npm npx 2>/dev/null; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"; nvm "$@"; }
-node() { unset -f nvm node npm npx 2>/dev/null; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"; node "$@"; }
-npm()  { unset -f nvm node npm npx 2>/dev/null; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"; npm "$@"; }
-npx()  { unset -f nvm node npm npx 2>/dev/null; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"; npx "$@"; }
+# Load full nvm only when you actually run `nvm` (e.g. to switch versions).
+# The default node goes on PATH below (after the other prepends, so nvm wins).
+nvm() { unset -f nvm; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"; nvm "$@"; }
 
 
 if [ -d /opt/homebrew ]; then
@@ -31,6 +25,16 @@ if [ -d /opt/homebrew ]; then
 fi
 export PATH="$HOME/.cargo/bin:$PATH"
 export PATH="$HOME/.local/bin:$PATH"
+
+# ponytail: put the default nvm node straight on PATH — as fast as lazy-load, but
+# snapshot-safe. The old self-referencing wrappers (node()->_load_nvm->node) recursed
+# forever once Claude Code's shell snapshot captured them without _load_nvm. Placed
+# after the prepends above so nvm's default beats Homebrew's node (matching old behaviour).
+if [ -r "$NVM_DIR/alias/default" ]; then
+  _nvm_bin="$NVM_DIR/versions/node/$(ls "$NVM_DIR/versions/node" 2>/dev/null | grep "^v$(cat "$NVM_DIR/alias/default")" | sort -V | tail -1)/bin"
+  [ -d "$_nvm_bin" ] && PATH="$_nvm_bin:$PATH"
+  unset _nvm_bin
+fi
 
 # Inbound ssh sessions land in a persistent tmux session: disconnects don't
 # kill work, and reconnecting (ssh or skiff) resumes where you left off.

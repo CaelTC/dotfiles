@@ -233,6 +233,13 @@ symlink "$DOTFILES_DIR/bash/.bash_profile" "$HOME/.bash_profile"
 # ── Zsh ──────────────────────────────────────────────────────────────────────
 symlink "$DOTFILES_DIR/zsh/.zshrc" "$HOME/.zshrc"
 
+# ── Starship ─────────────────────────────────────────────────────────────────
+symlink "$DOTFILES_DIR/starship/starship.toml" "$HOME/.config/starship.toml"
+# fsmonitor + untracked cache keep cold `git status` fast in big repos, so the
+# starship prompt never stalls past command_timeout on cd.
+git config --global core.fsmonitor true
+git config --global core.untrackedCache true
+
 echo ""
 echo "────────────────────────────────────────"
 echo "Done."
