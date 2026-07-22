@@ -15,12 +15,14 @@
 //!   from the store, for a macOS menu-bar **Utilization** %.
 
 mod budget;
+mod dissect;
 mod lifecycle;
 mod proxy;
 mod record;
 mod status;
 mod store;
 mod throughput;
+mod transcripts;
 mod tui;
 
 use std::net::SocketAddr;
@@ -90,6 +92,29 @@ enum Command {
     /// dropdown) from the store, then exit 0. Fed by a SwiftBar plugin so a macOS
     /// menu-bar item shows the **Representative Window**'s **Utilization** %.
     Status,
+
+    /// One-shot per-prompt token/cost breakdown from Claude Code's own
+    /// transcripts (`~/.claude/projects/*/*.jsonl`) — not this crate's proxy
+    /// store. Costs are API-equivalent estimates from a built-in price table.
+    Tokens {
+        /// Only sessions whose transcript was modified in the last N days.
+        #[arg(long, default_value_t = 7)]
+        days: u32,
+
+        /// Drill into one session's per-prompt rows (session-id prefix).
+        #[arg(long)]
+        session: Option<String>,
+
+        /// Emit the parsed data as JSON instead of tables.
+        #[arg(long)]
+        json: bool,
+
+        /// Dissect one session's context composition by source (CLAUDE.md
+        /// files, hooks, skill/agent listings, tool results) to find what to
+        /// prune. Defaults to the most recent session; combine with --session.
+        #[arg(long)]
+        dissect: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -137,6 +162,9 @@ fn main() -> Result<()> {
             store::append_record(&path, &record)
         }
         Some(Command::Status) => status::run(),
+        Some(Command::Tokens { days, session, json, dissect }) => {
+            transcripts::run(days, session, json, dissect)
+        }
         None => tui::run(),
     }
 }

@@ -82,3 +82,16 @@ export PATH="$HOME/.local/bin:$PATH"
 
 # no-mistakes
 export PATH="$HOME/.no-mistakes/bin:$PATH"
+
+# gnhf needs a work tree; a bare-repo container (.bare + worktrees layout) isn't
+# one, so `git status --porcelain` dies with "must be run in a work tree". If
+# launched from such a container, cd into the checked-out worktree first.
+# ponytail: picks the first non-bare worktree; add branch selection if you keep several.
+gnhf() {
+  if [ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" != true ] && git rev-parse --git-dir >/dev/null 2>&1; then
+    local wt
+    wt=$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{p=$2;b=0} /^bare$/{b=1} /^HEAD /{if(!b){print p;exit}}')
+    [ -n "$wt" ] && { echo "gnhf: bare container → running from $wt"; ( builtin cd "$wt" && command gnhf "$@" ); return; }
+  fi
+  command gnhf "$@"
+}

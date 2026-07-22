@@ -13,11 +13,12 @@
 //! - **Session History** lists every ended **Session** as
 //!   `project · model · total tokens · duration · ended (relative)`, scrollable.
 //!
-//! The right pane shows one of three [`View`]s at a time — **Live** (the
+//! The right pane shows one of four [`View`]s at a time — **Live** (the
 //! `Human`-Origin Active Session panels, the default), **History** (the
-//! scrollable ended-Session list), or **Agents** (the `Agent`-Origin Active
-//! Session panels) — cycled with `Tab`/`BackTab`. The **Budget left rail** stays
-//! visible in all three.
+//! scrollable ended-Session list), **Agents** (the `Agent`-Origin Active
+//! Session panels), or **Tokens** (per-prompt token/cost usage from Claude
+//! Code's own [`transcripts`]) — cycled with `Tab`/`BackTab`. The **Budget left
+//! rail** stays visible in all four.
 //!
 //! Active vs ended is the [`lifecycle`] classifier's call, not the TUI's: the
 //! render code only renders the classification (active panels / History rows),
@@ -48,40 +49,54 @@ use crate::lifecycle::{self, EndedSession};
 use crate::record::{Origin, ReqRecord};
 use crate::store::{self, SessionView};
 use crate::throughput::{self, RollingRate};
+use crate::transcripts::{self, SessionUsage};
 
 /// How often the dashboard ticks so countdowns advance and freshly-appended
 /// records are reflected within ~1s.
 const TICK: Duration = Duration::from_millis(1000);
 
-/// Which right-pane [`View`] is showing. Three exist, cycled with `Tab`
+/// The **Tokens** view's transcript recency window, matching the CLI's default.
+const TOKENS_DAYS: u32 = 7;
+
+/// Views that scroll the shared list offset (History and Tokens).
+fn scrollable(view: View) -> bool {
+    matches!(view, View::History | View::Tokens)
+}
+
+/// Which right-pane [`View`] is showing. Four exist, cycled with `Tab`
 /// (forward) / `BackTab` (reverse) in the captain's tab order **Live Human
-/// Session | History | Live Agents**:
+/// Session | History | Live Agents | Tokens**:
 /// - **Live** (the default) — the **Active Session** panels for `Human`-**Origin**
 ///   sessions (`cca`).
 /// - **History** — the scrollable ended-**Session** list (any Origin).
 /// - **Agents** — the **Active Session** panels for `Agent`-**Origin** sessions
 ///   (`ccagent`), same panel layout as Live.
+/// - **Tokens** — the per-prompt token/cost breakdown from Claude Code's own
+///   [`transcripts`], sessions with their prompts in one scrollable list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum View {
     Live,
     History,
     Agents,
+    Tokens,
 }
 
 impl View {
-    /// Advance **Live → History → Agents → Live** (the `Tab` action).
+    /// Advance **Live → History → Agents → Tokens → Live** (the `Tab` action).
     fn next(self) -> Self {
         match self {
             View::Live => View::History,
             View::History => View::Agents,
-            View::Agents => View::Live,
+            View::Agents => View::Tokens,
+            View::Tokens => View::Live,
         }
     }
 
-    /// Reverse **Live → Agents → History → Live** (the `BackTab` action).
+    /// Reverse of [`View::next`] (the `BackTab` action).
     fn prev(self) -> Self {
         match self {
-            View::Live => View::Agents,
+            View::Live => View::Tokens,
+            View::Tokens => View::Agents,
             View::Agents => View::History,
             View::History => View::Live,
         }
@@ -138,10 +153,14 @@ fn event_loop<B: ratatui::backend::Backend>(
     let mut sessions = store::session_views_in_dir(dir);
     let mut budget = store::newest_req_in_views(&sessions).cloned();
 
-    // Right-pane view state: Live is the default; History tracks a scroll offset
-    // (rows hidden above the viewport), clamped each tick to the current list.
+    // Right-pane view state: Live is the default; History and Tokens track a
+    // shared scroll offset (rows hidden above the viewport), clamped each tick.
+    // The Tokens data is parsed lazily on entering the view (one-time, sub-second
+    // for the 7-day window) and dropped on leaving so re-entry refreshes.
+    // ponytail: sync parse on a keypress; background thread if it ever stalls.
     let mut view = View::Live;
     let mut history_scroll: u16 = 0;
+    let mut tokens: Option<Vec<SessionUsage>> = None;
     loop {
         let now = chrono::Utc::now().timestamp();
         let now_ms = chrono::Utc::now().timestamp_millis();
@@ -150,12 +169,19 @@ fn event_loop<B: ratatui::backend::Backend>(
         // the turn-done detection (pid-liveness is the classifier's only I/O).
         let (active, history) = lifecycle::split_sessions(&sessions, lifecycle::pid_alive);
 
-        // Clamp the History scroll to what's actually scrollable now that the
-        // list and terminal size are known: rows beyond the last viewport line.
-        let max_scroll = max_history_scroll(history.len(), terminal.size()?.height);
+        // Clamp the scroll to what's actually scrollable now that the active
+        // view's list and terminal size are known: rows beyond the last viewport
+        // line.
+        let rows = match view {
+            View::Tokens => tokens.as_deref().map(|t| tokens_lines(t).len()).unwrap_or(0),
+            _ => history.len(),
+        };
+        let max_scroll = max_history_scroll(rows, terminal.size()?.height);
         history_scroll = history_scroll.min(max_scroll);
 
-        terminal.draw(|f| draw(f, budget.as_ref(), &active, &history, now, now_ms, view, history_scroll))?;
+        terminal.draw(|f| {
+            draw(f, budget.as_ref(), &active, &history, tokens.as_deref(), now, now_ms, view, history_scroll)
+        })?;
 
         // Wait up to one tick for a keypress; the tick itself advances the
         // countdown.
@@ -167,33 +193,35 @@ fn event_loop<B: ratatui::backend::Backend>(
                     return Ok(());
                 }
                 match key.code {
-                    // Tab cycles forward (Live → History → Agents), BackTab
-                    // reverse; entering History starts at the top.
-                    KeyCode::Tab => {
-                        view = view.next();
+                    // Tab cycles forward (Live → History → Agents → Tokens),
+                    // BackTab reverse; entering a list view starts at the top.
+                    // Tokens data loads on entry, drops on exit (fresh next time).
+                    KeyCode::Tab | KeyCode::BackTab => {
+                        view = if key.code == KeyCode::Tab { view.next() } else { view.prev() };
                         history_scroll = 0;
+                        tokens = if view == View::Tokens {
+                            Some(transcripts::load_recent(TOKENS_DAYS).unwrap_or_default())
+                        } else {
+                            None
+                        };
                     }
-                    KeyCode::BackTab => {
-                        view = view.prev();
-                        history_scroll = 0;
-                    }
-                    // History scrolling (no-op in Live view).
-                    KeyCode::Down | KeyCode::Char('j') if view == View::History => {
+                    // List scrolling (History and Tokens; no-op in panel views).
+                    KeyCode::Down | KeyCode::Char('j') if scrollable(view) => {
                         history_scroll = history_scroll.saturating_add(1).min(max_scroll);
                     }
-                    KeyCode::Up | KeyCode::Char('k') if view == View::History => {
+                    KeyCode::Up | KeyCode::Char('k') if scrollable(view) => {
                         history_scroll = history_scroll.saturating_sub(1);
                     }
-                    KeyCode::PageDown if view == View::History => {
+                    KeyCode::PageDown if scrollable(view) => {
                         history_scroll = history_scroll.saturating_add(10).min(max_scroll);
                     }
-                    KeyCode::PageUp if view == View::History => {
+                    KeyCode::PageUp if scrollable(view) => {
                         history_scroll = history_scroll.saturating_sub(10);
                     }
-                    KeyCode::Home | KeyCode::Char('g') if view == View::History => {
+                    KeyCode::Home | KeyCode::Char('g') if scrollable(view) => {
                         history_scroll = 0;
                     }
-                    KeyCode::End | KeyCode::Char('G') if view == View::History => {
+                    KeyCode::End | KeyCode::Char('G') if scrollable(view) => {
                         history_scroll = max_scroll;
                     }
                     _ => {}
@@ -227,6 +255,7 @@ fn draw(
     budget: Option<&ReqRecord>,
     active: &[&SessionView],
     history: &[EndedSession],
+    tokens: Option<&[SessionUsage]>,
     now_epoch: i64,
     now_ms: i64,
     view: View,
@@ -272,6 +301,7 @@ fn draw(
             );
         }
         View::History => draw_history(frame, chunks[1], history, now_ms, history_scroll),
+        View::Tokens => draw_tokens(frame, chunks[1], tokens, history_scroll),
     }
 
     draw_help(frame, outer[1], view);
@@ -291,11 +321,14 @@ fn max_history_scroll(rows: usize, term_height: u16) -> u16 {
 /// scroll hint while in **History**. Renders inverted-dim so it reads as chrome.
 fn draw_help(frame: &mut Frame, area: Rect, view: View) {
     let hint = match view {
-        View::Live => "[Live Human]  History  Live Agents   ·   [Tab/⇧Tab] cycle   [q] quit",
+        View::Live => "[Live Human]  History  Live Agents  Tokens   ·   [Tab/⇧Tab] cycle   [q] quit",
         View::History => {
-            "Live Human  [History]  Live Agents   ·   [Tab/⇧Tab] cycle   [↑/↓ j/k] scroll   [g/G] top/bottom   [q] quit"
+            "Live Human  [History]  Live Agents  Tokens   ·   [Tab/⇧Tab] cycle   [↑/↓ j/k] scroll   [g/G] top/bottom   [q] quit"
         }
-        View::Agents => "Live Human  History  [Live Agents]   ·   [Tab/⇧Tab] cycle   [q] quit",
+        View::Agents => "Live Human  History  [Live Agents]  Tokens   ·   [Tab/⇧Tab] cycle   [q] quit",
+        View::Tokens => {
+            "Live Human  History  Live Agents  [Tokens]   ·   [Tab/⇧Tab] cycle   [↑/↓ j/k] scroll   [g/G] top/bottom   [q] quit"
+        }
     };
     let para = Paragraph::new(Line::from(Span::styled(
         format!(" {hint} "),
@@ -464,6 +497,74 @@ fn history_row(ended: &EndedSession, now_ms: i64) -> Line<'static> {
             Style::default().fg(Color::DarkGray),
         ),
     ])
+}
+
+/// The **Tokens** view: per-prompt token/cost usage dissected from Claude Code's
+/// own transcripts, one session header row followed by its indented prompt rows,
+/// all in a single scrollable list (same scroll machinery as History).
+fn draw_tokens(frame: &mut Frame, area: Rect, sessions: Option<&[SessionUsage]>, scroll: u16) {
+    let sessions = sessions.unwrap_or_default();
+    let (cost, unpriced) = sessions.iter().fold((0.0, false), |acc, s| {
+        let (c, u) = s.cost();
+        (acc.0 + c, acc.1 || u)
+    });
+    let block = Block::default().borders(Borders::ALL).title(format!(
+        " Tokens (last {TOKENS_DAYS}d · {} est) ",
+        transcripts::format_cost(cost, unpriced)
+    ));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if sessions.is_empty() {
+        let msg = Paragraph::new("No transcripts found under ~/.claude/projects.")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(msg, inner);
+        return;
+    }
+
+    let para = Paragraph::new(tokens_lines(sessions)).scroll((scroll, 0));
+    frame.render_widget(para, inner);
+}
+
+/// Format the **Tokens** view's rows: a bold session header
+/// (`project · id · N prompts · total tok · cost`) then a dim indented row per
+/// prompt (`time  text · model · total · cost`). Pure — the render seam.
+fn tokens_lines(sessions: &[SessionUsage]) -> Vec<Line<'static>> {
+    let sep = Span::styled(" · ", Style::default().fg(Color::DarkGray));
+    let mut lines = Vec::new();
+    for s in sessions {
+        let (cost, unpriced) = s.cost();
+        lines.push(Line::from(vec![
+            Span::styled(s.project.clone(), Style::default().add_modifier(Modifier::BOLD)),
+            sep.clone(),
+            Span::styled(s.id.chars().take(8).collect::<String>(), Style::default().fg(Color::DarkGray)),
+            sep.clone(),
+            Span::styled(format!("{} prompts", s.prompts.len()), Style::default().fg(Color::Gray)),
+            sep.clone(),
+            Span::styled(format!("{} tok", humanize_tokens(s.total())), Style::default().fg(Color::Gray)),
+            sep.clone(),
+            Span::styled(transcripts::format_cost(cost, unpriced), Style::default().fg(Color::Cyan)),
+        ]));
+        for p in &s.prompts {
+            let mut text: String = p.prompt.lines().next().unwrap_or("").trim().chars()
+                .filter(|c| !c.is_control())
+                .take(48)
+                .collect();
+            if p.prompt.lines().next().unwrap_or("").trim().chars().count() > 48 {
+                text.push('…');
+            }
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {text}"), Style::default().fg(Color::Gray)),
+                sep.clone(),
+                Span::styled(p.model.strip_prefix("claude-").unwrap_or(&p.model).to_string(), Style::default().fg(Color::Cyan)),
+                sep.clone(),
+                Span::styled(format!("{} tok", humanize_tokens(p.total())), Style::default().fg(Color::DarkGray)),
+                sep.clone(),
+                Span::styled(transcripts::format_cost(p.cost_usd, p.unpriced), Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+    }
+    lines
 }
 
 /// Render a [`RollingRate`]'s per-bucket token sums as a braille sparkline — one
@@ -635,7 +736,7 @@ fn severity_color(severity: budget::Severity) -> Color {
 /// Humanize a token count into a compact form: `< 1000` stays exact, then `1.2k`,
 /// `100k`, `1.2M`. The fractional digit is dropped once the leading number reaches
 /// three figures (`100k`, not `100.0k`) so the width stays stable.
-fn humanize_tokens(n: u64) -> String {
+pub(crate) fn humanize_tokens(n: u64) -> String {
     fn scale(n: u64, divisor: f64, suffix: char) -> String {
         let v = n as f64 / divisor;
         if v >= 100.0 {
@@ -755,14 +856,30 @@ mod tests {
 
     #[test]
     fn view_cycles_forward_and_reverse() {
-        // Forward (Tab): Live → History → Agents → Live.
+        // Forward (Tab): Live → History → Agents → Tokens → Live.
         assert_eq!(View::Live.next(), View::History);
         assert_eq!(View::History.next(), View::Agents);
-        assert_eq!(View::Agents.next(), View::Live);
-        // Reverse (BackTab): Live → Agents → History → Live.
-        assert_eq!(View::Live.prev(), View::Agents);
-        assert_eq!(View::Agents.prev(), View::History);
-        assert_eq!(View::History.prev(), View::Live);
+        assert_eq!(View::Agents.next(), View::Tokens);
+        assert_eq!(View::Tokens.next(), View::Live);
+        // Reverse (BackTab) undoes forward at every stop.
+        for v in [View::Live, View::History, View::Agents, View::Tokens] {
+            assert_eq!(v.next().prev(), v);
+        }
+    }
+
+    #[test]
+    fn tokens_lines_render_headers_and_prompt_rows() {
+        let sessions = crate::transcripts::test_sessions();
+        let lines = tokens_lines(&sessions);
+        // one header + its prompts per session
+        let expected: usize = sessions.iter().map(|s| 1 + s.prompts.len()).sum();
+        assert_eq!(lines.len(), expected);
+        let header: String = lines[0].spans.iter().map(|s| s.content.clone()).collect();
+        assert!(header.contains("proj"));
+        assert!(header.contains("2 prompts"));
+        let prompt_row: String = lines[1].spans.iter().map(|s| s.content.clone()).collect();
+        assert!(prompt_row.starts_with("  "));
+        assert!(prompt_row.contains("fix the flaky test"));
     }
 
     /// A `SessionView` with the given id and **Origin**, active-shaped (has a

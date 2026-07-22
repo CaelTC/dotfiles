@@ -13,7 +13,7 @@
       "Bash(cargo test *)"
     ]
   },
-  "model": "opus",
+  "model": "fable",
   "hooks": {
     "SessionStart": [
       {
