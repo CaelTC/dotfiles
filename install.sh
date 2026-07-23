@@ -107,6 +107,11 @@ symlink "$DOTFILES_DIR/claude/settings.json" "$HOME/.claude/settings.json"
 symlink "$DOTFILES_DIR/claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
 symlink "$DOTFILES_DIR/claude/agents" "$HOME/.claude/agents"
 
+# Per-skill symlinks so shared skills coexist with tool-managed ones in ~/.claude/skills
+for skill in "$DOTFILES_DIR"/claude/skills/*/; do
+  symlink "${skill%/}" "$HOME/.claude/skills/$(basename "$skill")"
+done
+
 # ── claude-dash (cca) ────────────────────────────────────────────────────────
 if ! command -v cargo &>/dev/null; then
   warn "Rust/cargo not found — skipping claude-dash install. Install Rust from https://rustup.rs and re-run."

@@ -1,0 +1,172 @@
+/* Nootka Saunas — brand tokens. Paste into your global stylesheet.
+   Source: Nootka Guidebook v2022.1. Palette is exact; do not add off-brand hex.
+
+   Font: load DM Sans (weights 400, 500, 700) in your <head>:
+   <link rel="preconnect" href="https://fonts.googleapis.com">
+   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+*/
+
+:root {
+  /* ---- Brand palette (exact) ---- */
+  --nootka-steam: #CDD8DA;          /* light neutral background */
+  --nootka-coastal-water: #073D44;  /* dark teal */
+  --nootka-reindeer-moss: #919A3C;  /* olive accent green */
+  --nootka-evergreen: #324126;      /* deep forest green */
+  --nootka-heat: #FF821B;           /* orange accent — accent ONLY */
+
+  /* ---- Semantic aliases — prefer these in components ---- */
+  --color-bg:            var(--nootka-steam);
+  --color-surface:       #ffffff;
+  --color-surface-dark:  var(--nootka-evergreen);
+  --color-surface-dark2: var(--nootka-coastal-water);
+  --color-text:          var(--nootka-evergreen);
+  --color-text-inverse:  #ffffff;
+  --color-primary:       var(--nootka-evergreen);
+  --color-secondary:     var(--nootka-coastal-water);
+  --color-accent:        var(--nootka-heat);
+  --color-muted:         var(--nootka-reindeer-moss);
+  --color-focus:         var(--nootka-heat);
+
+  /* ---- Typography ---- */
+  --font-sans: 'DM Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-bold: 700;
+
+  /* Fluid type scale — big jump from body to display for clear hierarchy */
+  --text-body:    clamp(1rem, 0.95rem + 0.3vw, 1.125rem);
+  --text-lead:    clamp(1.25rem, 1.1rem + 0.6vw, 1.5rem);
+  --text-h3:      clamp(1.5rem, 1.3rem + 1vw, 2rem);
+  --text-h2:      clamp(2rem, 1.6rem + 2vw, 3.25rem);
+  --text-display: clamp(2.75rem, 2rem + 4vw, 5.5rem);
+  --leading-body: 1.5;
+  --leading-tight: 1.05;
+  --tracking-tight: -0.02em;
+
+  /* ---- Shape: restrained radii are the default; the barrel/arch is a deliberate accent ---- */
+  --radius-sm: 4px;      /* subtle rounding — inputs, tags, small controls */
+  --radius-md: 8px;      /* default button/surface rounding — flat and restrained */
+  --radius-lg: 16px;     /* larger surfaces (cards); still restrained, not a barrel */
+  --radius-pill: 999px;  /* accent only — reserve for a deliberate hero element, not blanket rounding */
+  --arch-top: 50% 50% 0 0 / 28% 28% 0 0; /* arched section top — a signature accent for one hero moment, used sparingly */
+
+  /* ---- Spacing & rhythm (generous whitespace) ---- */
+  --space-section: clamp(4rem, 8vw, 9rem);
+  --space-block: clamp(1.5rem, 3vw, 3rem);
+  --container-max: 1200px;
+  --container-pad: clamp(1.25rem, 4vw, 3rem);
+
+  /* ---- Elevation ---- */
+  --shadow-soft: 0 10px 30px -12px rgba(7, 61, 68, 0.25);
+  --shadow-lift: 0 20px 50px -16px rgba(7, 61, 68, 0.35);
+}
+
+/* ---- Base ---- */
+body {
+  font-family: var(--font-sans);
+  color: var(--color-text);
+  background: var(--color-bg);
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 {
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
+}
+
+/* ---- Building blocks ---- */
+
+/* Full-bleed dark brand section with light text */
+.nootka-section--dark {
+  background: var(--color-surface-dark);
+  color: var(--color-text-inverse);
+  padding-block: var(--space-section);
+}
+.nootka-section--teal {
+  background: var(--color-surface-dark2);
+  color: var(--color-text-inverse);
+  padding-block: var(--space-section);
+}
+.nootka-section--light {
+  background: var(--color-bg);
+  color: var(--color-text);
+  padding-block: var(--space-section);
+}
+
+/* Signature split: solid brand panel beside photo/content */
+.nootka-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 70vh;
+}
+@media (max-width: 720px) { .nootka-split { grid-template-columns: 1fr; } }
+
+/* Arched section top echoing the barrel form */
+.nootka-arch {
+  border-radius: var(--arch-top);
+  overflow: hidden;
+}
+
+/* Circular / arched image mask */
+.nootka-image--circle { border-radius: var(--radius-pill); overflow: hidden; aspect-ratio: 1; object-fit: cover; }
+.nootka-image--arch   { border-radius: var(--radius-pill) var(--radius-pill) var(--radius-md) var(--radius-md); overflow: hidden; object-fit: cover; }
+
+/* Primary CTA — the main place Heat orange is allowed */
+.nootka-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.85em 1.6em;
+  border-radius: var(--radius-md);   /* restrained default; pill is reserved for a hero accent */
+  font-weight: var(--weight-bold);
+  border: 0;
+  cursor: pointer;
+  background: var(--color-accent);
+  color: #1a1205;               /* dark text on Heat — AA safe */
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.nootka-btn:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); }
+
+/* Secondary CTA — outline, no orange flood */
+.nootka-btn--ghost {
+  background: transparent;
+  color: currentColor;
+  border: 2px solid currentColor;
+}
+
+/* Tag / supporting chip — olive */
+.nootka-tag {
+  display: inline-block;
+  padding: 0.3em 0.9em;
+  border-radius: var(--radius-sm);   /* restrained; not a pervasive pill */
+  background: var(--color-muted);
+  color: #1c2010;
+  font-weight: var(--weight-medium);
+  font-size: 0.85em;
+}
+
+/* Card */
+.nootka-card {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-soft);
+  overflow: hidden;
+}
+
+/* Accessible focus ring (Heat) */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* Centered constrained container with generous padding */
+.nootka-container {
+  max-width: var(--container-max);
+  margin-inline: auto;
+  padding-inline: var(--container-pad);
+}
