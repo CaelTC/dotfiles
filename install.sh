@@ -112,6 +112,17 @@ for skill in "$DOTFILES_DIR"/claude/skills/*/; do
   symlink "${skill%/}" "$HOME/.claude/skills/$(basename "$skill")"
 done
 
+# nootkify skill lives in a private repo (brand assets), not in this public one
+NOOTKIFY_DIR="$HOME/dev/nootkify"
+if [ ! -d "$NOOTKIFY_DIR/.git" ]; then
+  info "Cloning nootkify..."
+  git clone git@github.com:CaelTC/nootkify.git "$NOOTKIFY_DIR" || warn "nootkify clone failed (private repo — need ssh access)"
+else
+  info "Updating nootkify..."
+  git -C "$NOOTKIFY_DIR" pull --ff-only --quiet || warn "nootkify pull failed"
+fi
+[ -d "$NOOTKIFY_DIR" ] && symlink "$NOOTKIFY_DIR" "$HOME/.claude/skills/nootkify"
+
 # ── claude-dash (cca) ────────────────────────────────────────────────────────
 if ! command -v cargo &>/dev/null; then
   warn "Rust/cargo not found — skipping claude-dash install. Install Rust from https://rustup.rs and re-run."
