@@ -1,0 +1,11 @@
+[package]
+name = "claude-analyzer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chrono = "0.4"
+serde_json = "1"
+
+[profile.release]
+opt-level = 2

@@ -1,0 +1,1503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Where did my Claude tokens go?</title>
+<style>
+/* ---------- tokens (dataviz reference palette; both modes selected) ---------- */
+:root {
+  color-scheme: light;
+  --surface: #fcfcfb;
+  --plane: #f9f9f7;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --wash: rgba(11, 11, 11, 0.035);
+  --track: rgba(11, 11, 11, 0.07);
+  /* categorical slots 1..6, in Category order — never cycled, never re-ordered */
+  --c-Prompt: #2a78d6;
+  --c-Toolcall: #eb6834;
+  --c-MCP: #1baf7a;
+  --c-Skill: #eda100;
+  --c-Agent: #e87ba4;
+  --c-Overhead: #008300;
+  /* week-over-week direction cue: up = warmer, down = cooler (never status hues) */
+  --delta-up: #9c4a1e;
+  --delta-down: #285bac;
+  --main-mark: #a9a89f;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --surface: #1a1a19;
+    --plane: #0d0d0d;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --wash: rgba(255, 255, 255, 0.05);
+    --track: rgba(255, 255, 255, 0.10);
+    --c-Prompt: #3987e5;
+    --c-Toolcall: #d95926;
+    --c-MCP: #199e70;
+    --c-Skill: #c98500;
+    --c-Agent: #d55181;
+    --c-Overhead: #008300;
+    --delta-up: #eb9a76;
+    --delta-down: #86b6ef;
+    --main-mark: #5c5b56;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface: #1a1a19;
+  --plane: #0d0d0d;
+  --ink: #ffffff;
+  --ink-2: #c3c2b7;
+  --muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --border: rgba(255, 255, 255, 0.10);
+  --wash: rgba(255, 255, 255, 0.05);
+  --track: rgba(255, 255, 255, 0.10);
+  --c-Prompt: #3987e5;
+  --c-Toolcall: #d95926;
+  --c-MCP: #199e70;
+  --c-Skill: #c98500;
+  --c-Agent: #d55181;
+  --c-Overhead: #008300;
+  --delta-up: #eb9a76;
+  --delta-down: #86b6ef;
+  --main-mark: #5c5b56;
+}
+
+/* ---------- page ---------- */
+* { box-sizing: border-box; }
+html, body { max-width: 100%; overflow-x: hidden; }
+body {
+  margin: 0;
+  background: var(--plane);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1100px; margin: 0 auto; padding: 56px 24px 72px; }
+@media (max-width: 700px) { .wrap { padding: 32px 16px 48px; } }
+
+h1 { font-size: 26px; line-height: 1.25; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
+h2 { font-size: 17px; font-weight: 600; margin: 0 0 4px; letter-spacing: -0.005em; }
+.sub { color: var(--ink-2); font-size: 14px; margin: 0 0 20px; max-width: 68ch; }
+.range { color: var(--ink-2); font-size: 14px; margin: 6px 0 0; }
+
+/* ---------- header figures ---------- */
+.figures { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 40px; margin: 28px 0 14px; }
+.hero-label, .tile-label { color: var(--muted); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; }
+.hero-value { font-size: 56px; line-height: 1; font-weight: 600; letter-spacing: -0.03em; margin-top: 6px; }
+.tile-value { font-size: 22px; font-weight: 600; line-height: 1.2; margin-top: 8px; }
+.tile-note { color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+/* ---------- week-over-week delta ---------- */
+.delta { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.delta.up { color: var(--delta-up); }
+.delta.down { color: var(--delta-down); }
+.delta-none { color: var(--muted); }
+.delta-line { font-size: 13px; margin-top: 8px; }
+.delta-line .delta { font-weight: 600; }
+.prev-cell { color: var(--muted); }
+.prev-delta { font-size: 12px; margin-top: 2px; }
+.caption { color: var(--ink-2); font-size: 13.5px; max-width: 78ch; margin: 0; }
+
+/* ---------- tabs ---------- */
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 32px 0 18px; border-bottom: 1px solid var(--grid); }
+.tab {
+  appearance: none; background: none; border: 0; border-bottom: 2px solid transparent;
+  font: inherit; font-size: 14px; font-weight: 500; color: var(--muted);
+  padding: 10px 14px; margin-bottom: -1px; cursor: pointer; border-radius: 6px 6px 0 0;
+}
+.tab:hover { color: var(--ink-2); background: var(--wash); }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); font-weight: 600; }
+.tab:focus-visible { outline: 2px solid var(--c-Prompt); outline-offset: 2px; }
+
+/* ---------- cards ---------- */
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  padding: 24px; margin-bottom: 20px;
+}
+@media (max-width: 700px) { .card { padding: 16px; } }
+/* ---------- legend ---------- */
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 4px 0 18px; }
+.legend-item { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-2); }
+.swatch { width: 10px; height: 10px; border-radius: 3px; flex: 0 0 auto; }
+
+/* ---------- donut ---------- */
+.donut-wrap { text-align: center; margin: 4px 0 26px; }
+.donut { width: 100%; max-width: 320px; height: auto; display: block; margin: 0 auto; }
+.donut path { transition: opacity 120ms ease; }
+.donut path:hover, .donut path:focus { opacity: 0.82; outline: none; }
+.donut-center-value { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; }
+.donut-center-label { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
+
+/* ---------- tables ---------- */
+.tw { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table { width: 100%; min-width: 560px; border-collapse: collapse; font-size: 14px; }
+thead th {
+  text-align: left; font-weight: 600; font-size: 11px; color: var(--muted);
+  letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 0 9px 10px; border-bottom: 1px solid var(--grid); white-space: nowrap;
+}
+tbody td { padding: 13px 9px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+tbody tr:last-child td { border-bottom: 0; }
+th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+td.num { white-space: nowrap; }
+td.when { white-space: nowrap; }
+.name-cell { display: flex; align-items: baseline; gap: 9px; }
+.name-cell .swatch { margin-top: 5px; }
+.cat-name { font-weight: 600; }
+.desc { color: var(--muted); font-size: 12.5px; margin-top: 2px; max-width: 46ch; }
+.muted { color: var(--muted); }
+.dim td { color: var(--muted); }
+.dim .strong { color: var(--ink-2); }
+.tnote { color: var(--muted); font-size: 12.5px; margin: 14px 0 0; max-width: 74ch; }
+
+/* ---------- percent bar ---------- */
+.pbar-cell { min-width: 132px; width: 132px; }
+.pbar-row { display: flex; align-items: center; gap: 10px; }
+.pbar-num { font-variant-numeric: tabular-nums; font-size: 13px; width: 40px; text-align: right; flex: 0 0 auto; }
+.pbar { position: relative; height: 6px; flex: 1 1 auto; min-width: 44px; background: var(--track); border-radius: 4px; }
+.pbar > i { position: absolute; inset: 0 auto 0 0; border-radius: 2px 4px 4px 2px; display: block; }
+
+/* ---------- stacked mini bar (composition) ---------- */
+.mini { display: flex; gap: 2px; height: 9px; min-width: 88px; width: 96px; }
+.mini > span { min-width: 2px; border-radius: 1px; }
+.mini > span:first-child { border-radius: 4px 1px 1px 4px; }
+.mini > span:last-child { border-radius: 1px 4px 4px 1px; }
+.mini.empty { background: var(--track); border-radius: 4px; }
+.comp-cell { display: flex; align-items: center; gap: 10px; }
+.comp-label { font-size: 12.5px; color: var(--ink-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* ---------- day chart ---------- */
+.daywrap { margin-top: 2px; }
+.daygroups { display: flex; gap: 8px; margin-bottom: 12px; }
+.daygroup {
+  min-width: 0; text-align: center; font-size: 11px; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--muted); padding-bottom: 6px;
+  border-bottom: 1px solid var(--grid);
+}
+.daygroup.cur { color: var(--ink-2); }
+.daychart { display: flex; align-items: flex-end; gap: 8px; height: 190px; }
+.daycol { flex: 1 1 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; min-width: 0; }
+.daycap { font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; margin-bottom: 6px; white-space: nowrap; }
+.daybar { width: 24px; max-width: 100%; display: flex; flex-direction: column; }
+.daybar > span { display: block; width: 100%; }
+.daybar > span:first-child { border-radius: 4px 4px 0 0; }
+.daybar > span:hover, .daybar > span:focus { opacity: 0.82; outline: none; }
+.daycol.prev .daybar { opacity: 0.42; }
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .daycol.prev .daybar { opacity: 0.55; }
+}
+:root[data-theme="dark"] .daycol.prev .daybar { opacity: 0.55; }
+.daycol.prev .daycap { color: var(--muted); }
+.daycol.boundary, .daylabel.boundary { border-left: 1px solid var(--axis); }
+.dayzero { width: 24px; height: 2px; background: var(--axis); border-radius: 1px; }
+.dayaxis { display: flex; gap: 8px; border-top: 1px solid var(--axis); padding-top: 8px; }
+.daylabel { flex: 1 1 0; text-align: center; font-size: 12px; color: var(--ink-2); min-width: 0; font-variant-numeric: tabular-nums; }
+.daylabel .dow { display: block; font-size: 11px; color: var(--muted); }
+.daylabel.prev { color: var(--muted); }
+.daylabel small { display: block; color: var(--muted); font-size: 11px; }
+
+/* ---------- session rows ---------- */
+.sess-head { display: flex; align-items: baseline; gap: 8px; }
+.toggle {
+  appearance: none; background: none; border: 1px solid var(--border); border-radius: 6px;
+  color: var(--ink-2); font: inherit; font-size: 11px; line-height: 1; cursor: pointer;
+  width: 20px; height: 20px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  margin-top: 2px;
+}
+.toggle:hover { background: var(--wash); color: var(--ink); }
+.toggle:focus-visible { outline: 2px solid var(--c-Prompt); outline-offset: 1px; }
+.no-toggle { width: 20px; flex: 0 0 auto; }
+.project { font-weight: 600; }
+.snippet { color: var(--ink-2); font-size: 13px; margin-top: 3px; max-width: 44ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pill {
+  display: inline-block; font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--ink-2); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; margin-left: 8px;
+  vertical-align: 1px; white-space: nowrap;
+}
+tr.top-session > td { background: var(--wash); }
+tr.top-session > td:first-child { box-shadow: inset 3px 0 0 var(--ink); }
+.agents-cell { background: var(--wash); padding: 0 10px 14px 39px; }
+.agents-title { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); padding: 10px 0 8px; }
+table.agents { min-width: 0; width: auto; font-size: 13px; }
+table.agents td { padding: 5px 22px 5px 0; border: 0; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; color: var(--ink-2); }
+
+/* ---------- empty state ---------- */
+.empty { text-align: center; padding: 56px 24px; margin-top: 28px; }
+.empty h2 { font-size: 19px; margin-bottom: 8px; }
+.empty p { color: var(--ink-2); margin: 0 auto; max-width: 46ch; }
+
+/* ---------- footer ---------- */
+footer { margin-top: 36px; padding-top: 20px; border-top: 1px solid var(--grid); color: var(--muted); font-size: 12.5px; }
+footer p { margin: 0 0 5px; }
+
+/* ---------- tooltip ---------- */
+#tip {
+  position: fixed; z-index: 50; pointer-events: none; opacity: 0;
+  transform: translate(-50%, -100%); transition: opacity 90ms ease;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px; font-size: 12.5px; line-height: 1.45;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16); max-width: 260px; white-space: pre-line;
+}
+#tip.on { opacity: 1; }
+.tip-key { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 6px; }
+
+@media print { .tabs { display: none; } [role="tabpanel"] { display: block !important; } }
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<div id="tip" role="tooltip" aria-hidden="true"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ------------------------------------------------------------------ *
+   * Data. The Rust core replaces the single injection token below with
+   * the report JSON. Opened straight from disk the token is still an
+   * undeclared identifier, so reading it throws and we fall back to the
+   * development sample payload.
+   * ------------------------------------------------------------------ */
+  var INJECTED = (function () {
+    try { return __CLAUDE_ANALYZER_DATA__; } catch (e) { return null; }
+  })();
+
+  var SAMPLE = {
+  "generatedAt": "2026-07-29T18:30:00Z",
+  "weekStart": "2026-07-22T18:30:00Z",
+  "weekEnd": "2026-07-29T18:30:00Z",
+  "prevWeekStart": "2026-07-15T18:30:00Z",
+  "totals": {
+    "fresh": 38533000,
+    "cacheRead": 384546000,
+    "requests": 1692,
+    "sessions": 7,
+    "prevFresh": 32300000
+  },
+  "skippedRecords": 3,
+  "categories": [
+    {
+      "name": "Prompt",
+      "fresh": 4480000,
+      "cacheRead": 49280000,
+      "requests": 172,
+      "prevFresh": 3876000
+    },
+    {
+      "name": "Tool call",
+      "fresh": 11710000,
+      "cacheRead": 163940000,
+      "requests": 378,
+      "prevFresh": 9690000
+    },
+    {
+      "name": "MCP",
+      "fresh": 5040000,
+      "cacheRead": 45360000,
+      "requests": 131,
+      "prevFresh": 3230000,
+      "servers": [
+        {
+          "name": "playwright",
+          "fresh": 2910000,
+          "cacheRead": 26190000,
+          "requests": 62,
+          "prevFresh": 1100000
+        },
+        {
+          "name": "claude_ai_Gmail",
+          "fresh": 1340000,
+          "cacheRead": 12060000,
+          "requests": 41,
+          "prevFresh": 1300000
+        },
+        {
+          "name": "notion",
+          "fresh": 0,
+          "cacheRead": 0,
+          "requests": 0,
+          "prevFresh": 400000
+        },
+        {
+          "name": "linear",
+          "fresh": 790000,
+          "cacheRead": 7110000,
+          "requests": 28,
+          "prevFresh": 430000
+        }
+      ]
+    },
+    {
+      "name": "Skill",
+      "fresh": 5840000,
+      "cacheRead": 58400000,
+      "requests": 172,
+      "prevFresh": 4522000
+    },
+    {
+      "name": "Agent",
+      "fresh": 11160000,
+      "cacheRead": 66960000,
+      "requests": 587,
+      "prevFresh": 10659000
+    },
+    {
+      "name": "Overhead",
+      "fresh": 303000,
+      "cacheRead": 606000,
+      "requests": 252,
+      "prevFresh": 323000
+    }
+  ],
+  "models": [
+    {
+      "name": "claude-opus-5",
+      "fresh": 21400000,
+      "cacheRead": 213564591,
+      "requests": 720,
+      "prevFresh": 0
+    },
+    {
+      "name": "claude-sonnet-4-5",
+      "fresh": 9830000,
+      "cacheRead": 98099997,
+      "requests": 480,
+      "prevFresh": 7300000
+    },
+    {
+      "name": "claude-haiku-4-5",
+      "fresh": 4120000,
+      "cacheRead": 41116174,
+      "requests": 330,
+      "prevFresh": 3600000
+    },
+    {
+      "name": "claude-opus-4-5",
+      "fresh": 3183000,
+      "cacheRead": 31765238,
+      "requests": 162,
+      "prevFresh": 1600000
+    },
+    {
+      "name": "claude-opus-4-8",
+      "fresh": 0,
+      "cacheRead": 0,
+      "requests": 0,
+      "prevFresh": 19800000
+    }
+  ],
+  "days": [
+    {
+      "date": "2026-07-15",
+      "week": "previous",
+      "partial": true,
+      "fresh": 4200000,
+      "cacheRead": 41244000,
+      "byCategory": {
+        "Prompt": 504000,
+        "Tool call": 1260000,
+        "MCP": 420000,
+        "Skill": 588000,
+        "Agent": 1386000,
+        "Overhead": 42000
+      }
+    },
+    {
+      "date": "2026-07-16",
+      "week": "previous",
+      "partial": false,
+      "fresh": 6100000,
+      "cacheRead": 59902000,
+      "byCategory": {
+        "Prompt": 732000,
+        "Tool call": 1830000,
+        "MCP": 610000,
+        "Skill": 854000,
+        "Agent": 2013000,
+        "Overhead": 61000
+      }
+    },
+    {
+      "date": "2026-07-17",
+      "week": "previous",
+      "partial": false,
+      "fresh": 2800000,
+      "cacheRead": 27496000,
+      "byCategory": {
+        "Prompt": 336000,
+        "Tool call": 840000,
+        "MCP": 280000,
+        "Skill": 392000,
+        "Agent": 924000,
+        "Overhead": 28000
+      }
+    },
+    {
+      "date": "2026-07-18",
+      "week": "previous",
+      "partial": false,
+      "fresh": 5400000,
+      "cacheRead": 53028000,
+      "byCategory": {
+        "Prompt": 648000,
+        "Tool call": 1620000,
+        "MCP": 540000,
+        "Skill": 756000,
+        "Agent": 1782000,
+        "Overhead": 54000
+      }
+    },
+    {
+      "date": "2026-07-19",
+      "week": "previous",
+      "partial": false,
+      "fresh": 3900000,
+      "cacheRead": 38298000,
+      "byCategory": {
+        "Prompt": 468000,
+        "Tool call": 1170000,
+        "MCP": 390000,
+        "Skill": 546000,
+        "Agent": 1287000,
+        "Overhead": 39000
+      }
+    },
+    {
+      "date": "2026-07-20",
+      "week": "previous",
+      "partial": false,
+      "fresh": 6300000,
+      "cacheRead": 61866000,
+      "byCategory": {
+        "Prompt": 756000,
+        "Tool call": 1890000,
+        "MCP": 630000,
+        "Skill": 882000,
+        "Agent": 2079000,
+        "Overhead": 63000
+      }
+    },
+    {
+      "date": "2026-07-21",
+      "week": "previous",
+      "partial": false,
+      "fresh": 1900000,
+      "cacheRead": 18658000,
+      "byCategory": {
+        "Prompt": 228000,
+        "Tool call": 570000,
+        "MCP": 190000,
+        "Skill": 266000,
+        "Agent": 627000,
+        "Overhead": 19000
+      }
+    },
+    {
+      "date": "2026-07-22",
+      "week": "previous",
+      "partial": false,
+      "fresh": 1700000,
+      "cacheRead": 16694000,
+      "byCategory": {
+        "Prompt": 204000,
+        "Tool call": 510000,
+        "MCP": 170000,
+        "Skill": 238000,
+        "Agent": 561000,
+        "Overhead": 17000
+      }
+    },
+    {
+      "date": "2026-07-22",
+      "week": "current",
+      "partial": false,
+      "fresh": 862000,
+      "cacheRead": 11294000,
+      "byCategory": {
+        "Prompt": 210000,
+        "Tool call": 640000,
+        "MCP": 0,
+        "Skill": 0,
+        "Agent": 0,
+        "Overhead": 12000
+      }
+    },
+    {
+      "date": "2026-07-23",
+      "week": "current",
+      "partial": false,
+      "fresh": 909000,
+      "cacheRead": 10978000,
+      "byCategory": {
+        "Prompt": 290000,
+        "Tool call": 470000,
+        "MCP": 130000,
+        "Skill": 0,
+        "Agent": 0,
+        "Overhead": 19000
+      }
+    },
+    {
+      "date": "2026-07-24",
+      "week": "current",
+      "partial": false,
+      "fresh": 2327000,
+      "cacheRead": 27874000,
+      "byCategory": {
+        "Prompt": 430000,
+        "Tool call": 1120000,
+        "MCP": 90000,
+        "Skill": 660000,
+        "Agent": 0,
+        "Overhead": 27000
+      }
+    },
+    {
+      "date": "2026-07-25",
+      "week": "current",
+      "partial": false,
+      "fresh": 6352000,
+      "cacheRead": 62254000,
+      "byCategory": {
+        "Prompt": 810000,
+        "Tool call": 1540000,
+        "MCP": 2260000,
+        "Skill": 300000,
+        "Agent": 1390000,
+        "Overhead": 52000
+      }
+    },
+    {
+      "date": "2026-07-26",
+      "week": "current",
+      "partial": false,
+      "fresh": 5121000,
+      "cacheRead": 63982000,
+      "byCategory": {
+        "Prompt": 620000,
+        "Tool call": 3180000,
+        "MCP": 240000,
+        "Skill": 1040000,
+        "Agent": 0,
+        "Overhead": 41000
+      }
+    },
+    {
+      "date": "2026-07-27",
+      "week": "current",
+      "partial": false,
+      "fresh": 9634000,
+      "cacheRead": 89958000,
+      "byCategory": {
+        "Prompt": 940000,
+        "Tool call": 2120000,
+        "MCP": 410000,
+        "Skill": 2380000,
+        "Agent": 3720000,
+        "Overhead": 64000
+      }
+    },
+    {
+      "date": "2026-07-28",
+      "week": "current",
+      "partial": false,
+      "fresh": 13328000,
+      "cacheRead": 118206000,
+      "byCategory": {
+        "Prompt": 1180000,
+        "Tool call": 2640000,
+        "MCP": 1910000,
+        "Skill": 1460000,
+        "Agent": 6050000,
+        "Overhead": 88000
+      }
+    },
+    {
+      "date": "2026-07-29",
+      "week": "current",
+      "partial": false,
+      "fresh": 0,
+      "cacheRead": 0,
+      "byCategory": {
+        "Prompt": 0,
+        "Tool call": 0,
+        "MCP": 0,
+        "Skill": 0,
+        "Agent": 0,
+        "Overhead": 0
+      }
+    }
+  ],
+  "sessions": [
+    {
+      "id": "0582669e",
+      "project": "dev/nootka-sop",
+      "firstPrompt": "Rewrite the barrel sauna assembly SOP and generate printable checklist pages for…",
+      "start": "2026-07-28T09:12:00Z",
+      "end": "2026-07-28T14:41:00Z",
+      "fresh": 13328000,
+      "cacheRead": 118206000,
+      "requests": 614,
+      "byCategory": {
+        "Prompt": 1180000,
+        "Tool call": 2640000,
+        "MCP": 1910000,
+        "Skill": 1460000,
+        "Agent": 6050000,
+        "Overhead": 88000
+      },
+      "agents": [
+        {
+          "id": "a2b1e156",
+          "model": "claude-opus-4-5",
+          "fresh": 2783000,
+          "cacheRead": 16698000,
+          "requests": 146
+        },
+        {
+          "id": "7c4d9f02",
+          "model": "claude-sonnet-4-5",
+          "fresh": 1996500,
+          "cacheRead": 11979000,
+          "requests": 105
+        },
+        {
+          "id": "e91a3b77",
+          "model": "claude-haiku-4-5",
+          "fresh": 1270500,
+          "cacheRead": 7623000,
+          "requests": 67
+        }
+      ]
+    },
+    {
+      "id": "1f9c0a44",
+      "project": "dev/dotfiles",
+      "firstPrompt": "Build the HTML report template for claude-analyzer — self-contained, no chart libs",
+      "start": "2026-07-27T15:02:00Z",
+      "end": "2026-07-27T19:20:00Z",
+      "fresh": 9634000,
+      "cacheRead": 89958000,
+      "requests": 434,
+      "byCategory": {
+        "Prompt": 940000,
+        "Tool call": 2120000,
+        "MCP": 410000,
+        "Skill": 2380000,
+        "Agent": 3720000,
+        "Overhead": 64000
+      },
+      "agents": [
+        {
+          "id": "b03fe218",
+          "model": "claude-opus-4-5",
+          "fresh": 2269200,
+          "cacheRead": 13615200,
+          "requests": 119
+        },
+        {
+          "id": "d5710c9a",
+          "model": "claude-haiku-4-5",
+          "fresh": 1450800,
+          "cacheRead": 8704800,
+          "requests": 76
+        }
+      ]
+    },
+    {
+      "id": "9e2f5c30",
+      "project": "dev/nootka-site",
+      "firstPrompt": "Add the barrel sauna configurator to the product page and wire up the price table",
+      "start": "2026-07-25T08:45:00Z",
+      "end": "2026-07-25T12:10:00Z",
+      "fresh": 6352000,
+      "cacheRead": 62254000,
+      "requests": 265,
+      "byCategory": {
+        "Prompt": 810000,
+        "Tool call": 1540000,
+        "MCP": 2260000,
+        "Skill": 300000,
+        "Agent": 1390000,
+        "Overhead": 52000
+      },
+      "agents": [
+        {
+          "id": "4408ca6d",
+          "model": "claude-sonnet-4-5",
+          "fresh": 1390000,
+          "cacheRead": 8340000,
+          "requests": 73
+        }
+      ]
+    },
+    {
+      "id": "5ad3b7e1",
+      "project": "dev/claude-dash",
+      "firstPrompt": "Why is the budget gauge showing negative tokens after a weekly reset?",
+      "start": "2026-07-26T11:30:00Z",
+      "end": "2026-07-26T13:05:00Z",
+      "fresh": 5121000,
+      "cacheRead": 63982000,
+      "requests": 198,
+      "byCategory": {
+        "Prompt": 620000,
+        "Tool call": 3180000,
+        "MCP": 240000,
+        "Skill": 1040000,
+        "Agent": 0,
+        "Overhead": 41000
+      },
+      "agents": []
+    },
+    {
+      "id": "c6b80d19",
+      "project": "dev/dotfiles",
+      "firstPrompt": "skiff logs is truncating ansi escapes on linux hosts — fix and add a regression test",
+      "start": "2026-07-24T16:20:00Z",
+      "end": "2026-07-24T17:55:00Z",
+      "fresh": 2327000,
+      "cacheRead": 27874000,
+      "requests": 97,
+      "byCategory": {
+        "Prompt": 430000,
+        "Tool call": 1120000,
+        "MCP": 90000,
+        "Skill": 660000,
+        "Agent": 0,
+        "Overhead": 27000
+      },
+      "agents": []
+    },
+    {
+      "id": "3d17ea82",
+      "project": "dev/nootka-sop",
+      "firstPrompt": "Draft the shipping crate spec for the 6ft barrel — dimensions, bracing, label copy",
+      "start": "2026-07-23T10:05:00Z",
+      "end": "2026-07-23T10:52:00Z",
+      "fresh": 909000,
+      "cacheRead": 10978000,
+      "requests": 45,
+      "byCategory": {
+        "Prompt": 290000,
+        "Tool call": 470000,
+        "MCP": 130000,
+        "Skill": 0,
+        "Agent": 0,
+        "Overhead": 19000
+      },
+      "agents": []
+    },
+    {
+      "id": "b71f0c53",
+      "project": "dev/claude-dash",
+      "firstPrompt": "Bump the gauge refresh to 2s and re-check the throughput maths",
+      "start": "2026-07-22T20:15:00Z",
+      "end": "2026-07-22T21:05:00Z",
+      "fresh": 862000,
+      "cacheRead": 11294000,
+      "requests": 39,
+      "byCategory": {
+        "Prompt": 210000,
+        "Tool call": 640000,
+        "MCP": 0,
+        "Skill": 0,
+        "Agent": 0,
+        "Overhead": 12000
+      },
+      "agents": []
+    }
+  ],
+  "skills": [
+    {
+      "name": "orchestrate",
+      "runs": 4,
+      "fresh": 9400000,
+      "cacheRead": 89300000,
+      "avgFreshPerRun": 2350000,
+      "prevFresh": 6200000,
+      "composition": {
+        "main": 2632000,
+        "agents": 6768000
+      }
+    },
+    {
+      "name": "dataviz",
+      "runs": 6,
+      "fresh": 4150000,
+      "cacheRead": 39425000,
+      "avgFreshPerRun": 691667,
+      "prevFresh": 0,
+      "composition": {
+        "main": 2739000,
+        "agents": 1411000
+      }
+    },
+    {
+      "name": "diagnose",
+      "runs": 3,
+      "fresh": 3260000,
+      "cacheRead": 30970000,
+      "avgFreshPerRun": 1086667,
+      "prevFresh": 4800000,
+      "composition": {
+        "main": 2868800,
+        "agents": 391200
+      }
+    },
+    {
+      "name": "simplify",
+      "runs": 9,
+      "fresh": 2880000,
+      "cacheRead": 27360000,
+      "avgFreshPerRun": 320000,
+      "prevFresh": 3100000,
+      "composition": {
+        "main": 1296000,
+        "agents": 1584000
+      }
+    },
+    {
+      "name": "no-mistakes",
+      "runs": 2,
+      "fresh": 1540000,
+      "cacheRead": 14630000,
+      "avgFreshPerRun": 770000,
+      "prevFresh": 2050000,
+      "composition": {
+        "main": 908600,
+        "agents": 631400
+      }
+    },
+    {
+      "name": "(no skill)",
+      "runs": 0,
+      "fresh": 17303000,
+      "cacheRead": 182861000,
+      "avgFreshPerRun": 0,
+      "prevFresh": 16150000,
+      "composition": {
+        "main": 16928600,
+        "agents": 374400
+      }
+    }
+  ]
+};
+
+  var DATA = (INJECTED && typeof INJECTED === "object") ? INJECTED : SAMPLE;
+
+  /* ---------------------------- domain ------------------------------ */
+  var CATS = ["Prompt", "Tool call", "MCP", "Skill", "Agent", "Overhead"];
+  var CAT_DESC = {
+    "Prompt": "your own messages, pasted text and images",
+    "Tool call": "files Claude read, searched, edited or ran",
+    "MCP": "results returned by connected MCP servers",
+    "Skill": "instructions loaded when a skill starts running",
+    "Agent": "subagents Claude spawned to work in parallel",
+    "Overhead": "background housekeeping, like naming a session"
+  };
+  var catVar = function (name) { return "var(--c-" + String(name).replace(/[^A-Za-z]/g, "") + ")"; };
+
+  /* --------------------------- formatting --------------------------- */
+  function fmt(n) {
+    n = Number(n) || 0;
+    var a = Math.abs(n);
+    if (a >= 1e9) return trim(n / 1e9) + "B";
+    if (a >= 1e6) return trim(n / 1e6) + "M";
+    if (a >= 1e3) return trim(n / 1e3) + "k";
+    return String(Math.round(n));
+  }
+  function trim(x) {
+    var s = (Math.abs(x) >= 100 ? x.toFixed(0) : x.toFixed(1));
+    return s.replace(/\.0$/, "");
+  }
+  function int(n) { return (Number(n) || 0).toLocaleString(); }
+  function share(part, whole) { return whole > 0 ? (Number(part) || 0) / whole * 100 : 0; }
+  function pctText(p) {
+    if (!(p > 0)) return "0%";
+    if (p < 1) return "<1%";
+    return (p >= 10 ? p.toFixed(0) : p.toFixed(1)) + "%";
+  }
+  function esc(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+  function plural(n, word) { return int(n) + " " + word + (Number(n) === 1 ? "" : "s"); }
+
+  function d(v) { var t = new Date(v); return isNaN(t) ? null : t; }
+  function fmtDay(t) { return t.toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
+  function fmtDayYear(t) { return t.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }); }
+  function fmtWhen(t) {
+    return t.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) +
+      ", " + t.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  }
+  function fmtStamp(t) { return fmtDayYear(t) + " at " + t.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); }
+  function fmtDur(a, b) {
+    if (!a || !b) return "";
+    var m = Math.max(0, Math.round((b - a) / 60000));
+    if (m < 60) return m + " min";
+    var h = Math.floor(m / 60), r = m % 60;
+    return h + "h" + (r ? " " + r + "m" : "");
+  }
+  function localDate(iso) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ""));
+    if (!m) { return d(iso) || new Date(); }
+    return new Date(+m[1], +m[2] - 1, +m[3]);
+  }
+
+  /* --------------------------- fragments ---------------------------- */
+  function swatch(cat) { return '<span class="swatch" style="background:' + catVar(cat) + '"></span>'; }
+
+  // Disclosure button for a drill-down row (sessions -> agents, MCP -> servers).
+  function toggleBtn(rid, label) {
+    return '<button class="toggle" type="button" aria-expanded="false" aria-controls="' + rid +
+      '" data-toggle="' + rid + '" data-label="' + esc(label) + '" title="' + esc("Show " + label) + '">+</button>';
+  }
+  var noToggle = '<span class="no-toggle" aria-hidden="true"></span>';
+
+  // Week-over-week cue. Direction is carried by the arrow AND the word, never
+  // by colour alone; "new"/"gone" cover the appear/disappear cases.
+  function deltaBadge(cur, prev) {
+    cur = Number(cur) || 0;
+    prev = Number(prev) || 0;
+    if (prev <= 0 && cur <= 0) return '<span class="delta-none">—</span>';
+    if (prev <= 0) return '<span class="delta up">new</span>';
+    if (cur <= 0) return '<span class="delta down">gone</span>';
+    var p = (cur - prev) / prev * 100;
+    if (Math.abs(p) < 0.5) return '<span class="delta-none">no change</span>';
+    var a = Math.abs(p);
+    return '<span class="delta ' + (p > 0 ? "up" : "down") + '">' + (p > 0 ? "▲" : "▼") + " " +
+      (a >= 10 ? a.toFixed(0) : a.toFixed(1)) + "%</span>";
+  }
+
+  function prevHeader() { return '<th class="num">Previous 7 days</th>'; }
+  function prevCell(prev, cur) {
+    return '<td class="num prev-cell">' + ((Number(prev) || 0) > 0 ? fmt(prev) : "—") +
+      '<div class="prev-delta">' + deltaBadge(cur, prev) + "</div></td>";
+  }
+  function isGone(row) { return (Number(row.fresh) || 0) <= 0 && (Number(row.prevFresh) || 0) > 0; }
+
+  function legend(cats) {
+    if (!cats.length) return "";
+    return '<div class="legend">' + cats.map(function (c) {
+      return '<span class="legend-item">' + swatch(c) + esc(c) + "</span>";
+    }).join("") + "</div>";
+  }
+
+  // Horizontal magnitude bar: value left-anchored, 4px rounded data end.
+  function pbar(p, color) {
+    var w = Math.max(0, Math.min(100, p));
+    return '<div class="pbar-row"><span class="pbar-num">' + pctText(p) + "</span>" +
+      '<span class="pbar"><i style="width:' + (w === 0 ? 0 : Math.max(w, 1.2)) + "%;background:" + (color || "var(--ink-2)") + '"></i></span></div>';
+  }
+
+  // Composition strip: 2px surface gaps do the separating, no strokes.
+  function miniStack(byCat, total, label) {
+    var parts = CATS.filter(function (c) { return (byCat[c] || 0) > 0; });
+    if (!parts.length || !(total > 0)) return '<div class="mini empty" title="no fresh tokens"></div>';
+    return '<div class="mini">' + parts.map(function (c) {
+      var v = byCat[c] || 0;
+      return '<span style="flex:' + (v / total * 1000).toFixed(3) + ' 1 0;background:' + catVar(c) + '"' +
+        ' tabindex="0" data-tip="' + esc(c + "\n" + fmt(v) + " fresh · " + pctText(share(v, total)) + " of " + (label || "this")) + '"></span>';
+    }).join("") + "</div>";
+  }
+
+  /* ------------------------------ donut ----------------------------- */
+  function donut(cats, total) {
+    var CX = 168, CY = 124, R = 86, SW = 24, GAP = 2;
+    var C = 2 * Math.PI * R;
+    var present = cats.filter(function (c) { return c.fresh > 0; });
+    if (!present.length || !(total > 0)) return '<p class="muted">No fresh tokens recorded.</p>';
+
+    var offset = 0, arcs = [], labels = [];
+    present.forEach(function (c) {
+      var frac = c.fresh / total;
+      var len = frac * C;
+      var dash = Math.max(len - (present.length > 1 ? GAP : 0), 0.6);
+      arcs.push('<circle cx="' + CX + '" cy="' + CY + '" r="' + R + '" fill="none"' +
+        ' stroke="' + catVar(c.name) + '" stroke-width="' + SW + '" stroke-linecap="butt"' +
+        ' stroke-dasharray="' + dash.toFixed(2) + " " + (C - dash).toFixed(2) + '"' +
+        ' stroke-dashoffset="' + (-offset).toFixed(2) + '"' +
+        ' tabindex="0" role="listitem"' +
+        ' data-tip="' + esc(c.name + "\n" + fmt(c.fresh) + " fresh · " + pctText(frac * 100) + " of the Week\n" + fmt(c.cacheRead) + " cache reads · " + plural(c.requests, "request")) + '"' +
+        "></circle>");
+      if (frac >= 0.05) {
+        var mid = (offset + len / 2) / C * 2 * Math.PI - Math.PI / 2;
+        var lx = CX + Math.cos(mid) * (R + 30), ly = CY + Math.sin(mid) * (R + 30);
+        var anchor = Math.cos(mid) > 0.25 ? "start" : (Math.cos(mid) < -0.25 ? "end" : "middle");
+        labels.push('<text x="' + lx.toFixed(1) + '" y="' + ly.toFixed(1) + '" text-anchor="' + anchor +
+          '" dominant-baseline="middle" font-size="12.5" fill="var(--ink-2)" font-family="inherit">' +
+          pctText(frac * 100) + "</text>");
+      }
+      offset += len;
+    });
+
+    return '<svg class="donut" viewBox="0 0 336 248" role="img" aria-label="' +
+      esc("Fresh tokens by Category: " + present.map(function (c) { return c.name + " " + pctText(share(c.fresh, total)); }).join(", ")) + '">' +
+      '<g transform="rotate(-90 ' + CX + " " + CY + ')" role="list">' + arcs.join("") + "</g>" +
+      labels.join("") +
+      '<text class="donut-center-value" x="' + CX + '" y="' + (CY - 4) + '" text-anchor="middle" fill="var(--ink)" font-family="inherit">' + fmt(total) + "</text>" +
+      '<text class="donut-center-label" x="' + CX + '" y="' + (CY + 18) + '" text-anchor="middle" fill="var(--muted)" font-family="inherit">Fresh tokens</text>' +
+      "</svg>";
+  }
+
+  /* ------------------------------ views ----------------------------- */
+  function viewCategory(m) {
+    var anyServers = m.cats.some(function (c) { return c.servers.length > 0; });
+    var rows = m.cats.map(function (c, i) {
+      var p = share(c.fresh, m.total);
+      var servers = c.servers.filter(function (x) {
+        return x && ((Number(x.fresh) || 0) > 0 || (Number(x.prevFresh) || 0) > 0);
+      });
+      var rid = "cat-" + i;
+      var main = "<tr" + (isGone(c) ? ' class="dim"' : "") + ">" +
+        '<td><div class="name-cell">' +
+        (servers.length ? toggleBtn(rid, "which MCP servers this came from") : noToggle) +
+        swatch(c.name) +
+        '<div><div class="cat-name">' + esc(c.name) + "</div>" +
+        '<div class="desc">' + esc(CAT_DESC[c.name] || "") +
+        (servers.length ? " — " + plural(servers.length, "server") : "") + "</div></div></div></td>" +
+        '<td class="num">' + fmt(c.fresh) + "</td>" +
+        '<td class="pbar-cell">' + pbar(p, catVar(c.name)) + "</td>" +
+        (m.hasPrev ? prevCell(c.prevFresh, c.fresh) : "") +
+        '<td class="num muted">' + fmt(c.cacheRead) + "</td>" +
+        '<td class="num muted">' + int(c.requests) + "</td>" +
+        "</tr>";
+      if (!servers.length) return main;
+
+      var serverRows = servers.map(function (x) {
+        return "<tr" + (isGone(x) ? ' class="dim"' : "") + "><td>" + swatch("MCP") +
+          ' <span class="mono">' + esc(x.name) + "</span></td>" +
+          '<td class="num">' + fmt(x.fresh) + " fresh</td>" +
+          '<td class="num muted">' + pctText(share(x.fresh, c.fresh)) + " of MCP</td>" +
+          '<td class="num muted">' + plural(x.requests, "request") + "</td>" +
+          '<td class="num muted">' + fmt(x.cacheRead) + " cache reads</td>" +
+          (m.hasPrev ? '<td class="num muted">' + fmt(x.prevFresh) + " prev · " + deltaBadge(x.fresh, x.prevFresh) + "</td>" : "") +
+          "</tr>";
+      }).join("");
+
+      return main + '<tr id="' + rid + '" hidden><td class="agents-cell" colspan="' + (m.hasPrev ? 6 : 5) + '">' +
+        '<div class="agents-title">Which MCP servers this slice came from</div>' +
+        '<table class="agents"><tbody>' + serverRows + "</tbody></table></td></tr>";
+    }).join("");
+
+    return '<div class="card"><h2>Where the Week’s Fresh tokens went</h2>' +
+      '<p class="sub">Every request lands in exactly one Category, decided by what was newly added to the conversation just before it.</p>' +
+      legend(m.presentCats) +
+      '<div class="donut-wrap">' + donut(m.cats, m.total) + "</div>" +
+      '<div class="tw"><table><thead><tr>' +
+      "<th>Category</th><th class=\"num\">Fresh</th><th>% of Week</th>" +
+      (m.hasPrev ? prevHeader() : "") +
+      "<th class=\"num\">Cache reads</th><th class=\"num\">Requests</th>" +
+      "</tr></thead><tbody>" + rows + "</tbody></table></div>" +
+      '<p class="tnote">Cache reads are context Claude replayed from cache at roughly a tenth of the price — shown here so a Category’s share still reflects what it actually cost.' +
+      (anyServers ? " Open the MCP row to see which connected servers it came from." : "") + "</p>" +
+      "</div>";
+  }
+
+  function viewSession(m) {
+    if (!m.sessions.length) return '<div class="card"><p class="muted">No sessions in this Week.</p></div>';
+
+    var rows = m.sessions.map(function (s, i) {
+      var start = d(s.start), end = d(s.end);
+      var p = share(s.fresh, m.total);
+      var hasAgents = (s.agents || []).length > 0;
+      var rid = "sess-" + i;
+      var head = hasAgents ? toggleBtn(rid, "the subagents this session spawned") : noToggle;
+
+      var main = "<tr" + (i === 0 ? ' class="top-session"' : "") + ">" +
+        '<td><div class="sess-head">' + head +
+        '<div><div class="project">' + esc(s.project || "(unknown project)") +
+        (i === 0 ? '<span class="pill">Biggest this Week</span>' : "") + "</div>" +
+        '<div class="snippet" title="' + esc(s.firstPrompt || "") + '">' + esc(s.firstPrompt || "—") + "</div>" +
+        (hasAgents ? '<div class="desc">' + plural(s.agents.length, "subagent") + "</div>" : "") +
+        "</div></div></td>" +
+        '<td class="muted when">' + (start ? esc(fmtWhen(start)) : "—") +
+        (start && end ? '<div class="desc">' + esc(fmtDur(start, end)) + "</div>" : "") + "</td>" +
+        '<td class="num muted">' + int(s.requests) + "</td>" +
+        '<td class="num">' + fmt(s.fresh) + "</td>" +
+        '<td class="pbar-cell">' + pbar(p, "var(--ink-2)") + "</td>" +
+        '<td><div class="comp-cell">' + miniStack(s.byCategory || {}, s.fresh, "this session") + "</div></td>" +
+        "</tr>";
+
+      if (!hasAgents) return main;
+
+      var agentRows = s.agents.map(function (a) {
+        return "<tr><td>" + swatch("Agent") + ' <span class="mono">' + esc(a.model || "unknown model") + "</span></td>" +
+          '<td class="num">' + fmt(a.fresh) + " fresh</td>" +
+          '<td class="num muted">' + pctText(share(a.fresh, s.fresh)) + " of session</td>" +
+          '<td class="num muted">' + plural(a.requests, "request") + "</td>" +
+          '<td class="num muted">' + fmt(a.cacheRead) + " cache reads</td></tr>";
+      }).join("");
+
+      return main + '<tr id="' + rid + '" hidden><td class="agents-cell" colspan="6">' +
+        '<div class="agents-title">Subagents spawned by this session</div>' +
+        '<table class="agents"><tbody>' + agentRows + "</tbody></table></td></tr>";
+    }).join("");
+
+    return '<div class="card"><h2>Sessions, biggest first</h2>' +
+      '<p class="sub">One session is one Claude Code conversation. A session’s total already includes every subagent it spawned — open a row to see them.</p>' +
+      legend(m.presentCats) +
+      '<div class="tw"><table><thead><tr>' +
+      "<th>Session</th><th>When</th><th class=\"num\">Requests</th><th class=\"num\">Fresh</th><th>% of Week</th><th>Category split</th>" +
+      "</tr></thead><tbody>" + rows + "</tbody></table></div>" +
+      '<p class="tnote">A request is one call to Claude. The colour strip on the right shows how that session’s Fresh tokens split across Categories.</p>' +
+      "</div>";
+  }
+
+  function viewDay(m) {
+    var PLOT = 176;
+    if (!m.days.length) return '<div class="card"><p class="muted">No days to show.</p></div>';
+
+    // one scale across both windows so the comparison is honest
+    var max = m.days.reduce(function (a, x) { return Math.max(a, x.fresh || 0); }, 0);
+    var prevCount = m.days.filter(function (x) { return x.week === "previous"; }).length;
+    var curCount = m.days.length - prevCount;
+    var twoWindows = prevCount > 0 && curCount > 0;
+    var firstCurrent = -1;
+    for (var fi = 0; fi < m.days.length; fi++) {
+      if (m.days[fi].week === "current") { firstCurrent = fi; break; }
+    }
+    if (!twoWindows) firstCurrent = -1;
+    // the boundary calendar day can carry traffic on both sides of the Week's
+    // start instant, in which case it appears as two adjacent columns
+    var splitDay = (firstCurrent > 0 && m.days[firstCurrent].date === m.days[firstCurrent - 1].date)
+      ? fmtDay(localDate(m.days[firstCurrent].date))
+      : "";
+    var wrapWidth = Math.max(700, m.days.length * 72);
+
+    var cols = m.days.map(function (day, di) {
+      var fresh = day.fresh || 0;
+      var by = day.byCategory || {};
+      var label = localDate(day.date);
+      var isPrev = day.week === "previous";
+      var when = fmtDay(label) + (isPrev ? " (previous 7 days)" : "");
+      var barH = max > 0 ? Math.round(fresh / max * PLOT) : 0;
+      var body;
+      if (fresh <= 0 || barH < 1) {
+        body = '<div class="dayzero" tabindex="0" data-tip="' + esc(when + "\nNo activity") + '"></div>';
+      } else {
+        var parts = CATS.filter(function (c) { return (by[c] || 0) > 0; });
+        // 2px surface gaps do the separating; on a very short bar they would
+        // inflate it, so the gap narrows rather than the bar lying about its size.
+        var gapPx = parts.length < 2 ? 0 : (barH >= parts.length * 5 ? 2 : 1);
+        var gaps = (parts.length - 1) * gapPx;
+        var avail = Math.max(barH - gaps, parts.length);
+        var hs = parts.map(function (c) { return Math.max(1, Math.round((by[c] || 0) / fresh * avail)); });
+        var sum = hs.reduce(function (a, b) { return a + b; }, 0);
+        hs[hs.length - 1] = Math.max(1, hs[hs.length - 1] + (avail - sum));
+        // topmost stacked segment first in the DOM (column grows downward visually)
+        body = '<div class="daybar" style="gap:' + gapPx + 'px">' + parts.map(function (c, k) {
+          return '<span style="height:' + hs[k] + "px;background:" + catVar(c) + '" tabindex="0" data-tip="' +
+            esc(when + " — " + c + "\n" + fmt(by[c]) + " fresh · " + pctText(share(by[c], fresh)) + " of the day") + '"></span>';
+        }).reverse().join("") + "</div>";
+      }
+      var cls = "daycol" + (isPrev ? " prev" : "") + (di === firstCurrent ? " boundary" : "");
+      return '<div class="' + cls + '"><div class="daycap">' + (fresh > 0 ? fmt(fresh) : "0") + "</div>" + body + "</div>";
+    }).join("");
+
+    var axis = m.days.map(function (day, di) {
+      var label = localDate(day.date);
+      var cls = "daylabel" + (day.week === "previous" ? " prev" : "") + (di === firstCurrent ? " boundary" : "");
+      return '<div class="' + cls + '"><span class="dow">' +
+        esc(label.toLocaleDateString(undefined, { weekday: "short" })) + "</span>" +
+        label.getDate() + (day.partial ? "<small>(partial)</small>" : "") + "</div>";
+    }).join("");
+
+    var groups = twoWindows
+      ? '<div class="daygroups">' +
+        '<div class="daygroup prev" style="flex:' + prevCount + ' 1 0">Previous 7 days</div>' +
+        '<div class="daygroup cur" style="flex:' + curCount + ' 1 0">This Week</div></div>'
+      : "";
+
+    return '<div class="card"><h2>Fresh tokens per day</h2>' +
+      '<p class="sub">' + (twoWindows
+        ? "Two rolling windows side by side: the previous 7 days, muted, then this Week."
+        : "The Week is the trailing 7 days, so the oldest day starts part-way through — it is marked partial rather than hidden.") +
+      "</p>" +
+      legend(m.presentCats) +
+      '<div class="daywrap" style="max-width:' + wrapWidth + 'px">' +
+      groups +
+      '<div class="daychart">' + cols + "</div>" +
+      '<div class="dayaxis">' + axis + "</div></div>" +
+      '<p class="tnote">Each column is one calendar day in your local time, stacked by Category. Totals sit above each column' +
+      (twoWindows ? ", and both windows share one scale so the heights compare directly. The oldest day starts part-way through, so it is marked partial rather than hidden." : ".") +
+      (splitDay ? " " + esc(splitDay) + " appears twice because the Week begins part-way through it — the muted column is the part that fell in the previous 7 days." : "") +
+      "</p>" +
+      "</div>";
+  }
+
+  function viewSkill(m) {
+    if (!m.skills.length) {
+      return '<div class="card"><h2>Skill runs</h2><p class="muted">No skills ran in this Week.</p></div>';
+    }
+    var rows = m.skills.map(function (s) {
+      var noSkill = /^\(no skill\)$/i.test(s.name || "");
+      var comp = s.composition || { main: 0, agents: 0 };
+      var compTotal = (comp.main || 0) + (comp.agents || 0);
+      var agentPct = share(comp.agents, compTotal);
+      return "<tr" + (noSkill || isGone(s) ? ' class="dim"' : "") + ">" +
+        "<td>" + (noSkill
+          ? '<span class="strong">(no skill)</span><div class="desc">requests that ran outside any skill</div>'
+          : '<span class="cat-name">' + esc(s.name) + "</span>") + "</td>" +
+        '<td class="num">' + (s.runs > 0 ? int(s.runs) : "—") + "</td>" +
+        '<td class="num">' + (s.runs > 0 ? fmt(s.avgFreshPerRun) : "—") + "</td>" +
+        '<td class="num">' + fmt(s.fresh) + "</td>" +
+        '<td class="pbar-cell">' + pbar(share(s.fresh, m.total), noSkill ? "var(--muted)" : "var(--ink-2)") + "</td>" +
+        (m.hasPrev ? prevCell(s.prevFresh, s.fresh) : "") +
+        '<td><div class="comp-cell">' +
+        (compTotal > 0
+          ? '<div class="mini">' +
+            '<span style="flex:' + ((comp.main || 0) / compTotal * 1000).toFixed(3) + ' 1 0;background:var(--main-mark)" tabindex="0" data-tip="' +
+              esc("Main conversation\n" + fmt(comp.main) + " fresh · " + pctText(share(comp.main, compTotal))) + '"></span>' +
+            '<span style="flex:' + ((comp.agents || 0) / compTotal * 1000).toFixed(3) + ' 1 0;background:' + catVar("Agent") + '" tabindex="0" data-tip="' +
+              esc("Agents\n" + fmt(comp.agents) + " fresh · " + pctText(agentPct)) + '"></span></div>' +
+            '<span class="comp-label">' + pctText(agentPct) + " agents</span>"
+          : '<div class="mini empty"></div><span class="comp-label muted">—</span>') +
+        "</div></td></tr>";
+    }).join("");
+
+    return '<div class="card"><h2>Skill runs</h2>' +
+      '<p class="sub">A Skill run counts everything the skill caused, including agents it spawned.</p>' +
+      '<div class="legend"><span class="legend-item"><span class="swatch" style="background:var(--main-mark)"></span>Main conversation</span>' +
+      '<span class="legend-item">' + swatch("Agent") + "Agents</span></div>" +
+      '<div class="tw"><table><thead><tr>' +
+      "<th>Skill</th><th class=\"num\">Runs</th><th class=\"num\">Avg / run</th><th class=\"num\">Total fresh</th><th>% of Week</th>" +
+      (m.hasPrev ? prevHeader() : "") +
+      "<th>Made up of</th>" +
+      "</tr></thead><tbody>" + rows + "</tbody></table></div>" +
+      '<p class="tnote">This measures what invoking a skill actually cost, not how long its instructions are. “(no skill)” is everything that ran outside a skill, so the list still adds up to the whole Week.</p>' +
+      "</div>";
+  }
+
+  function viewModel(m) {
+    if (!m.models.length) {
+      return '<div class="card"><h2>Models</h2><p class="muted">No model information recorded in this Week.</p></div>';
+    }
+    var rows = m.models.map(function (x) {
+      return "<tr" + (isGone(x) ? ' class="dim"' : "") + ">" +
+        '<td><span class="mono">' + esc(x.name) + "</span></td>" +
+        '<td class="num">' + fmt(x.fresh) + "</td>" +
+        '<td class="pbar-cell">' + pbar(share(x.fresh, m.total), "var(--ink-2)") + "</td>" +
+        (m.hasPrev ? prevCell(x.prevFresh, x.fresh) : "") +
+        '<td class="num muted">' + fmt(x.cacheRead) + "</td>" +
+        '<td class="num muted">' + int(x.requests) + "</td>" +
+        "</tr>";
+    }).join("");
+
+    return '<div class="card"><h2>Which models did the work</h2>' +
+      '<p class="sub">The same Week split by the model that answered each request — main conversation and subagents together.</p>' +
+      '<div class="tw"><table><thead><tr>' +
+      "<th>Model</th><th class=\"num\">Fresh</th><th>% of Week</th>" +
+      (m.hasPrev ? prevHeader() : "") +
+      "<th class=\"num\">Cache reads</th><th class=\"num\">Requests</th>" +
+      "</tr></thead><tbody>" + rows + "</tbody></table></div>" +
+      '<p class="tnote">Model ids are exactly as the API reported them, date suffixes included. A row marked “gone” ran only in the previous 7 days; “new” means it appeared this Week.</p>' +
+      "</div>";
+  }
+
+  /* ------------------------------ shell ----------------------------- */
+  var TABS = [
+    { id: "category", label: "By Category", view: viewCategory },
+    { id: "session", label: "By Session", view: viewSession },
+    { id: "day", label: "By Day", view: viewDay },
+    { id: "skill", label: "By Skill", view: viewSkill },
+    { id: "model", label: "By Model", view: viewModel }
+  ];
+
+  function model(data) {
+    data = data || {};
+    var totals = data.totals || {};
+    var total = Number(totals.fresh) || 0;
+    var byName = {};
+    (data.categories || []).forEach(function (c) { if (c && c.name) byName[c.name] = c; });
+    var cats = CATS.map(function (n) {
+      var c = byName[n] || {};
+      return {
+        name: n,
+        fresh: Number(c.fresh) || 0,
+        cacheRead: Number(c.cacheRead) || 0,
+        requests: Number(c.requests) || 0,
+        prevFresh: Number(c.prevFresh) || 0,
+        servers: Array.isArray(c.servers) ? c.servers : []
+      };
+    });
+    // Previous Week total: from totals when the core sends it, else derived.
+    var prevTotal = Number(totals.prevFresh) || 0;
+    if (!prevTotal) prevTotal = cats.reduce(function (a, c) { return a + c.prevFresh; }, 0);
+
+    return {
+      raw: data,
+      totals: totals,
+      total: total,
+      prevTotal: prevTotal,
+      hasPrev: prevTotal > 0,
+      cats: cats,
+      presentCats: cats.filter(function (c) { return c.fresh > 0; }).map(function (c) { return c.name; }),
+      days: (data.days || []).slice(),
+      sessions: (data.sessions || []).slice().sort(function (a, b) { return (b.fresh || 0) - (a.fresh || 0); }),
+      skills: (data.skills || []).slice(),
+      models: (data.models || []).slice().sort(function (a, b) { return (b.fresh || 0) - (a.fresh || 0); })
+    };
+  }
+
+  function header(m, bare) {
+    var ws = d(m.raw.weekStart), we = d(m.raw.weekEnd);
+    var range = (ws && we)
+      ? fmtDay(ws) + " – " + fmtDayYear(we)
+      : "the last 7 days";
+    if (bare) {
+      return "<header><h1>Where did my Claude tokens go?</h1>" +
+        '<p class="range">Week of ' + esc(range) + " · the trailing 7 days, not a calendar week</p></header>";
+    }
+    var cache = Number(m.totals.cacheRead) || 0;
+    var reqs = Number(m.totals.requests) || 0;
+    var sess = Number(m.totals.sessions) || m.sessions.length || 0;
+
+    return "<header><h1>Where did my Claude tokens go?</h1>" +
+      '<p class="range">Week of ' + esc(range) + " · the trailing 7 days, not a calendar week</p>" +
+      '<div class="figures">' +
+      '<div><div class="hero-label">Fresh tokens</div><div class="hero-value">' + fmt(m.total) + "</div>" +
+      (m.hasPrev
+        ? '<div class="delta-line">' + deltaBadge(m.total, m.prevTotal) +
+          ' <span class="muted">vs previous 7 days (' + fmt(m.prevTotal) + ")</span></div>"
+        : "") +
+      "</div>" +
+      '<div><div class="tile-label">Cache reads</div><div class="tile-value">' + fmt(cache) + '</div><div class="tile-note">≈ 10% of the cost</div></div>' +
+      '<div><div class="tile-label">Requests</div><div class="tile-value">' + int(reqs) + '</div><div class="tile-note">across ' + plural(sess, "session") + "</div></div>" +
+      "</div>" +
+      '<p class="caption">Fresh tokens are everything Claude processed at full price — your prompts, tool results and subagents. Cache reads are context replayed from cache at roughly a tenth of the cost, so they are reported separately and never added in.</p>' +
+      "</header>";
+  }
+
+  function footer(m) {
+    var g = d(m.raw.generatedAt);
+    var skipped = Number(m.raw.skippedRecords) || 0;
+    return "<footer>" +
+      "<p>Generated " + (g ? esc(fmtStamp(g)) : "just now") + ".</p>" +
+      (skipped > 0 ? "<p>" + int(skipped) + " record" + (skipped === 1 ? "" : "s") + " skipped (unrecognized format).</p>" : "") +
+      "<p>claude-analyzer — reads your local Claude Code transcripts; nothing leaves this machine.</p>" +
+      "</footer>";
+  }
+
+  function isEmpty(m) {
+    return !(m.total > 0) && !(Number(m.totals.requests) > 0) && m.sessions.length === 0;
+  }
+
+  function render() {
+    var m = model(DATA);
+    var app = document.getElementById("app");
+
+    if (isEmpty(m)) {
+      app.innerHTML = header(m, true) +
+        '<div class="card empty"><h2>No Claude Code activity in the last 7 days</h2>' +
+        "<p>Nothing to report — there are no transcripts with requests inside this Week. Run this again after your next Claude Code session.</p></div>" +
+        footer(m);
+      return;
+    }
+
+    var tabsHtml = '<div class="tabs" role="tablist" aria-label="Grouping">' + TABS.map(function (t, i) {
+      return '<button class="tab" type="button" role="tab" id="tab-' + t.id + '" aria-controls="panel-' + t.id +
+        '" aria-selected="' + (i === 0) + '" data-tab="' + t.id + '">' + esc(t.label) + "</button>";
+    }).join("") + "</div>";
+
+    var panels = TABS.map(function (t, i) {
+      return '<section role="tabpanel" id="panel-' + t.id + '" aria-labelledby="tab-' + t.id + '" tabindex="0"' +
+        (i === 0 ? "" : " hidden") + ">" + t.view(m) + "</section>";
+    }).join("");
+
+    app.innerHTML = header(m) + tabsHtml + panels + footer(m);
+
+    // tab switching
+    app.querySelectorAll("[data-tab]").forEach(function (btn) {
+      btn.addEventListener("click", function () { select(btn.getAttribute("data-tab")); });
+      btn.addEventListener("keydown", function (e) {
+        var i = TABS.findIndex(function (t) { return t.id === btn.getAttribute("data-tab"); });
+        var next = e.key === "ArrowRight" ? i + 1 : (e.key === "ArrowLeft" ? i - 1 : -1);
+        if (next < 0 || next >= TABS.length) return;
+        e.preventDefault();
+        var id = TABS[next].id;
+        select(id);
+        document.getElementById("tab-" + id).focus();
+      });
+    });
+
+    function select(id) {
+      TABS.forEach(function (t) {
+        var on = t.id === id;
+        document.getElementById("tab-" + t.id).setAttribute("aria-selected", String(on));
+        document.getElementById("panel-" + t.id).hidden = !on;
+      });
+      hideTip();
+    }
+
+    // agent expand / collapse
+    app.querySelectorAll("[data-toggle]").forEach(function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var row = document.getElementById(btn.getAttribute("data-toggle"));
+        if (!row) return;
+        var open = !row.hidden;
+        row.hidden = open;
+        btn.setAttribute("aria-expanded", String(!open));
+        btn.textContent = open ? "+" : "−";
+        btn.title = (open ? "Show " : "Hide ") + (btn.getAttribute("data-label") || "details");
+      });
+    });
+  }
+
+  /* ----------------------------- tooltip ---------------------------- */
+  var tip = document.getElementById("tip");
+  function showTip(el, x, y) {
+    var text = el.getAttribute("data-tip");
+    if (!text) return;
+    tip.textContent = text;
+    tip.classList.add("on");
+    var pad = 12;
+    var r = tip.getBoundingClientRect();
+    var left = Math.min(Math.max(x, r.width / 2 + pad), window.innerWidth - r.width / 2 - pad);
+    var top = Math.max(y - 10, r.height + pad);
+    tip.style.left = left + "px";
+    tip.style.top = top + "px";
+  }
+  function hideTip() { tip.classList.remove("on"); }
+
+  document.addEventListener("mousemove", function (e) {
+    var el = e.target && e.target.closest ? e.target.closest("[data-tip]") : null;
+    if (el) showTip(el, e.clientX, e.clientY); else hideTip();
+  });
+  document.addEventListener("focusin", function (e) {
+    var el = e.target && e.target.closest ? e.target.closest("[data-tip]") : null;
+    if (!el) return hideTip();
+    var b = el.getBoundingClientRect();
+    showTip(el, b.left + b.width / 2, b.top);
+  });
+  document.addEventListener("focusout", hideTip);
+  document.addEventListener("scroll", hideTip, true);
+  window.addEventListener("resize", hideTip);
+
+  render();
+})();
+</script>
+</body>
+</html>

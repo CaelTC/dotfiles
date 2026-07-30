@@ -1,0 +1,2 @@
+{"type":"user","timestamp":"2026-01-07T10:00:00.000Z","uuid":"n1","message":{"role":"user","content":"What did I write down yesterday?"}}
+{"type":"assistant","timestamp":"2026-01-07T10:00:01.000Z","uuid":"n2","message":{"role":"assistant","id":"msg_s2","model":"claude-fable-5","content":[{"type":"text","text":"Here are yesterday's notes."}],"usage":{"input_tokens":1,"cache_creation_input_tokens":1,"cache_read_input_tokens":3,"output_tokens":1}}}
