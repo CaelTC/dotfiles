@@ -11,7 +11,8 @@
       "Bash(cargo build *)",
       "Bash(cargo check *)",
       "Bash(cargo test *)"
-    ]
+    ],
+    "defaultMode": "auto"
   },
   "model": "opus",
   "hooks": {
@@ -49,9 +50,9 @@
     "warp@claude-code-warp": true,
     "rust-analyzer-lsp@claude-plugins-official": true,
     "pyright-lsp@claude-plugins-official": true,
-    "frontend-design@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": false,
     "ponytail@ponytail": true,
-    "swift-lsp@claude-plugins-official": true,
+    "swift-lsp@claude-plugins-official": false,
     "mattpocock-skills@mattpocock": true
   },
   "extraKnownMarketplaces": {
@@ -83,5 +84,14 @@
   "skipDangerousModePermissionPrompt": true,
   "skipWorkflowUsageWarning": true,
   "editorMode": "vim",
-  "voiceEnabled": true
+  "voiceEnabled": true,
+  "skillOverrides": {
+    "prototype": "off",
+    "orchestrate": "off",
+    "diagnose": "off",
+    "write-a-skill": "off",
+    "caveman": "off",
+    "tdd": "off",
+    "triage": "off"
+  }
 }
