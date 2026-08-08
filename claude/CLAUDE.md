@@ -14,3 +14,6 @@ Skip isolation when:
 
 Agent worktrees branch from the current HEAD (`worktree.baseRef = "head"`), so
 unpushed commits and feature-branch state come along.
+
+## Explore or planning
+When prompted to explore or plan a feature, new project or new idea. If this is a bigger endeavor use the /grill-me skill to make sure the user and you operate under the same understanding. If the change is minimal or clear and do not need deeper exploration or grilling, ask relevant questions and ask for the users confirmation before starting the implementation.

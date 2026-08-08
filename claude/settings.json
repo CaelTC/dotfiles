@@ -14,7 +14,16 @@
     ],
     "defaultMode": "auto"
   },
-  "model": "opus",
+  "model": "fable",
+  "skillOverrides": {
+    "prototype": "off",
+    "orchestrate": "off",
+    "diagnose": "off",
+    "write-a-skill": "off",
+    "caveman": "off",
+    "tdd": "off",
+    "triage": "off"
+  },
   "hooks": {
     "SessionStart": [
       {
@@ -84,14 +93,5 @@
   "skipDangerousModePermissionPrompt": true,
   "skipWorkflowUsageWarning": true,
   "editorMode": "vim",
-  "voiceEnabled": true,
-  "skillOverrides": {
-    "prototype": "off",
-    "orchestrate": "off",
-    "diagnose": "off",
-    "write-a-skill": "off",
-    "caveman": "off",
-    "tdd": "off",
-    "triage": "off"
-  }
+  "voiceEnabled": true
 }
