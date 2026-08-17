@@ -163,6 +163,8 @@ fi
 
 symlink "$DOTFILES_DIR/herdr/config.toml" "$HOME/.config/herdr/config.toml"
 
+herdr plugin link "$DOTFILES_DIR/herdr/plugins/two-tabs" &>/dev/null || true
+
 # ── Claude agent tools (axi) ─────────────────────────────────────────────────
 export PATH="$(npm prefix -g)/bin:$PATH"
 for pkg in lavish-axi gh-axi chrome-devtools-axi tasks-axi; do

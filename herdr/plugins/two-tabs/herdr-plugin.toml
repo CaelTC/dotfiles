@@ -1,0 +1,9 @@
+id = "two-tabs"
+name = "Two tabs"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Give every new workspace an Agents tab and a Terminal tab"
+
+[[events]]
+on = "workspace.created"
+command = ["sh", "-c", 'exec "$HERDR_PLUGIN_ROOT/two-tabs.sh"']
