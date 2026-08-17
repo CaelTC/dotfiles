@@ -8,11 +8,11 @@ theme = light:GitHub Light High Contrast,dark:GitHub Dark High Contrast
 window-theme = auto
 
 # Window chrome
-macos-titlebar-style = tabs
+macos-titlebar-style = hidden
 macos-non-native-fullscreen = true
 macos-option-as-alt = true
 window-padding-x = 8
-window-padding-y = 4
+window-padding-y = 4,0
 background-opacity = 1.0
 
 # Quick terminal — F4 to toggle

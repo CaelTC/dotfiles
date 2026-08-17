@@ -153,6 +153,16 @@ else
   info "no-mistakes already installed"
 fi
 
+# ── herdr ────────────────────────────────────────────────────────────────────
+if ! command -v herdr &>/dev/null; then
+  info "Installing herdr..."
+  curl -fsSL https://herdr.dev/install.sh | sh
+else
+  info "herdr already installed"
+fi
+
+symlink "$DOTFILES_DIR/herdr/config.toml" "$HOME/.config/herdr/config.toml"
+
 # ── Claude agent tools (axi) ─────────────────────────────────────────────────
 export PATH="$(npm prefix -g)/bin:$PATH"
 for pkg in lavish-axi gh-axi chrome-devtools-axi tasks-axi; do
