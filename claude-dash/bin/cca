@@ -20,4 +20,5 @@ set -u
 _cca_prog=cca
 _cca_origin=human
 _cca_perm=force-auto
+set -- --rc "$@"
 source "${0:A:h}/lib/cca-capture.sh"
