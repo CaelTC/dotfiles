@@ -10,11 +10,20 @@
       "Bash(cargo init *)",
       "Bash(cargo build *)",
       "Bash(cargo check *)",
-      "Bash(cargo test *)"
+      "Bash(cargo test *)",
+      "Bash(gh-axi:*)",
+      "Bash(tasks-axi:*)",
+      "Bash(chrome-devtools-axi:*)",
+      "Bash(lavish-axi:*)"
+    ],
+    "deny": [
+      "Bash(gh:*)",
+      "Bash(npx playwright:*)",
+      "Bash(npx puppeteer:*)"
     ],
     "defaultMode": "auto"
   },
-  "model": "fable",
+  "model": "opus",
   "skillOverrides": {
     "prototype": "off",
     "orchestrate": "off",
@@ -22,7 +31,10 @@
     "write-a-skill": "off",
     "caveman": "off",
     "tdd": "off",
-    "triage": "off"
+    "triage": "off",
+    "unslop": "off",
+    "save-idea": "off",
+    "implement-issues": "off"
   },
   "hooks": {
     "SessionStart": [
@@ -60,9 +72,9 @@
     "rust-analyzer-lsp@claude-plugins-official": true,
     "pyright-lsp@claude-plugins-official": true,
     "frontend-design@claude-plugins-official": false,
-    "ponytail@ponytail": true,
     "swift-lsp@claude-plugins-official": false,
-    "mattpocock-skills@mattpocock": true
+    "mattpocock-skills@mattpocock": true,
+    "ponytail@ponytail": true
   },
   "extraKnownMarketplaces": {
     "claude-code-warp": {
@@ -71,16 +83,16 @@
         "repo": "warpdotdev/claude-code-warp"
       }
     },
-    "ponytail": {
-      "source": {
-        "source": "github",
-        "repo": "DietrichGebert/ponytail"
-      }
-    },
     "mattpocock": {
       "source": {
         "source": "github",
         "repo": "mattpocock/skills"
+      }
+    },
+    "ponytail": {
+      "source": {
+        "source": "github",
+        "repo": "DietrichGebert/ponytail"
       }
     }
   },
