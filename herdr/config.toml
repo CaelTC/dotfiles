@@ -8,7 +8,7 @@ dark_name = "catppuccin"
 light_name = "catppuccin-latte"
 
 [ui]
-pane_gaps = false
+pane_gaps = true
 show_agent_labels_on_pane_borders = false
 
 

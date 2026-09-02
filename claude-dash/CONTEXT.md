@@ -36,7 +36,7 @@ Which content the right pane shows — cycled with `Tab`/`BackTab`. Three exist:
 _Avoid_: "tab", "screen", "page" (use View)
 
 **cca**:
-The thin zsh wrapper invoked in place of `claude` for a **Human**-**Origin** **Session** (evolved from the `claude --permission auto` alias). For its **Session** it stands up a local **Proxy** via `ANTHROPIC_BASE_URL`, then runs `claude --permission-mode auto` through it. The component that *captures*; **claude-dash** only *reads*.
+The thin zsh wrapper invoked in place of `claude` for a **Human**-**Origin** **Session** (evolved from the `claude --permission auto` alias). For its **Session** it stands up a local **Proxy** via `ANTHROPIC_BASE_URL`, then runs `claude --permission-mode bypassPermissions` through it. The component that *captures*; **claude-dash** only *reads*.
 
 **ccagent**:
 The agent-session sibling of **cca**: the same capture lifecycle (shared in `bin/lib/cca-capture.sh`) for an **Agent**-**Origin** **Session**. It tags the **Session** Agent and passes the caller's args straight through — no forced `--permission-mode auto` — so a background agent can pass `--dangerously-skip-permissions` and run unattended while still flowing through the **Proxy**.

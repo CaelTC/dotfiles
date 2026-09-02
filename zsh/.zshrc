@@ -1,6 +1,6 @@
 alias g="git"
 # cca is the claude-dash wrapper at ~/.local/bin/cca (passes --permission-mode
-# auto through to claude behind the capture proxy). No alias — an alias would
+# bypassPermissions through to claude behind the capture proxy). No alias — an alias would
 # shadow the wrapper and silently disable dashboard capture.
 
 command -v starship >/dev/null && eval "$(starship init zsh)"
@@ -99,3 +99,7 @@ gnhf() {
   fi
   command gnhf "$@"
 }
+
+# Android SDK (added for nootka-kiosk project)
+export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
+export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"

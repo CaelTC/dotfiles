@@ -6,7 +6,7 @@
 # file inherits the caller's positional params as claude's args):
 #   _cca_prog    — program name for diagnostics ("cca" | "ccagent")
 #   _cca_origin  — the Session's Origin: "human" | "agent" (tags the start record)
-#   _cca_perm    — permission behavior: "force-auto" | "passthrough"
+#   _cca_perm    — permission behavior: "force-bypass" | "passthrough"
 #
 # Per invocation this:
 #   1. mints a short Session id,
@@ -15,7 +15,7 @@
 #   4. ONLY THEN writes the Session's `start` record (via `claude-dash
 #      record-start`, so the JSONL schema stays owned by the Rust code; `--agent`
 #      is passed for Agent Origin) and exports ANTHROPIC_BASE_URL at the Proxy,
-#   5. runs `claude`, either forcing `--permission-mode auto` (human) or passing
+#   5. runs `claude`, either forcing `--permission-mode bypassPermissions` (human) or passing
 #      the caller's args straight through (agent, so it can pass
 #      `--dangerously-skip-permissions` and run unattended).
 #
@@ -36,12 +36,12 @@ local -r ready_timeout_secs=2
 local dash="${CLAUDE_DASH_BIN:-claude-dash}"
 
 # The permission behavior, resolved once into the args prepended to `claude`.
-# force-auto (cca): keep `--permission-mode auto`. passthrough (ccagent): nothing —
+# force-bypass (cca): `--permission-mode bypassPermissions`. passthrough (ccagent): nothing —
 # the caller's args flow straight through so an agent can pass
 # `--dangerously-skip-permissions`.
 local -a claude_perm
-if [[ "$_cca_perm" == "force-auto" ]]; then
-  claude_perm=(--permission-mode auto)
+if [[ "$_cca_perm" == "force-bypass" ]]; then
+  claude_perm=(--permission-mode bypassPermissions)
 else
   claude_perm=()
 fi
@@ -157,8 +157,8 @@ trap 'kill "$proxy_pid" 2>/dev/null' EXIT INT TERM
 #    capture is committed only once the Proxy is known to be bound (ADR-0002).
 export ANTHROPIC_BASE_URL="$base_url"
 
-# 7. Run claude through the Proxy, passing through all args. force-auto keeps
-#    `--permission-mode auto`; passthrough runs the caller's args verbatim (so an
+# 7. Run claude through the Proxy, passing through all args. force-bypass keeps
+#    `--permission-mode bypassPermissions`; passthrough runs the caller's args verbatim (so an
 #    agent can pass `--dangerously-skip-permissions`). Not `exec` — we keep the
 #    shell alive so we can write the `end` record and the EXIT trap can reap the
 #    Proxy once claude returns.
