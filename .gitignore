@@ -1,2 +1,5 @@
 .backup/
 .DS_Store
+# Written by the Herdr app into linked mod folders
+herdr-app/mods/*/gpui-kit.d.ts
+herdr-app/mods/*/jsconfig.json
