@@ -165,6 +165,51 @@ symlink "$DOTFILES_DIR/herdr/config.toml" "$HOME/.config/herdr/config.toml"
 
 herdr plugin link "$DOTFILES_DIR/herdr/plugins/two-tabs" &>/dev/null || true
 
+# ── Herdr app: firstmate pirate-flag icon ────────────────────────────────────
+# The Herdr desktop app reads ~/.config/herdr-app/programs.json. Firstmate's
+# primary pane is distinguished from ordinary claude panes by process name: a
+# `firstmate` symlink to the claude binary (launch the primary with `firstmate`).
+# The flag is tinted per machine (herdr-app/gen-programs.sh).
+if ! command -v jq &>/dev/null; then
+  info "Installing jq..."
+  pkg_install jq
+fi
+
+HERDR_APP_HOME="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
+symlink "$DOTFILES_DIR/herdr-app/firstmate-flag.svg" "$HERDR_APP_HOME/my-icons/firstmate-flag.svg"
+
+# Merge into programs.json (never clobber: back up an existing one first, and
+# only touch the `firstmate` entry). Re-running yields the same file.
+PROGRAMS_JSON="$HERDR_APP_HOME/programs.json"
+PROGRAMS_NEW="$("$DOTFILES_DIR/herdr-app/gen-programs.sh")"
+if [ -f "$PROGRAMS_JSON" ]; then
+  if merged="$(jq --argjson new "$PROGRAMS_NEW" '. * $new' "$PROGRAMS_JSON" 2>/dev/null)"; then
+    if [ "$merged" = "$(jq . "$PROGRAMS_JSON")" ]; then
+      info "Already up to date: $PROGRAMS_JSON"
+    else
+      backup_path="$BACKUP_DIR/${PROGRAMS_JSON/#$HOME\//}"
+      warn "Backing up existing $PROGRAMS_JSON → $backup_path"
+      mkdir -p "$(dirname "$backup_path")"
+      cp "$PROGRAMS_JSON" "$backup_path"
+      printf '%s\n' "$merged" > "$PROGRAMS_JSON"
+      info "Merged firstmate entry into $PROGRAMS_JSON"
+    fi
+  else
+    warn "$PROGRAMS_JSON is not valid JSON — leaving it alone; add the firstmate entry by hand"
+  fi
+else
+  mkdir -p "$HERDR_APP_HOME"
+  printf '%s\n' "$PROGRAMS_NEW" > "$PROGRAMS_JSON"
+  info "Wrote $PROGRAMS_JSON"
+fi
+
+# `firstmate` launcher: same binary as claude, different process name.
+if CLAUDE_BIN="$(command -v claude 2>/dev/null)"; then
+  symlink "$CLAUDE_BIN" "$HOME/.local/bin/firstmate"
+else
+  warn "claude not found — skipping the firstmate launcher symlink"
+fi
+
 # ── Claude agent tools (axi) ─────────────────────────────────────────────────
 export PATH="$(npm prefix -g)/bin:$PATH"
 for pkg in lavish-axi gh-axi chrome-devtools-axi tasks-axi; do
