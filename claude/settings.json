@@ -107,6 +107,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$HOME/.claude/hooks/herdr-app-context.sh\" ] && sh \"$HOME/.claude/hooks/herdr-app-context.sh\" || true",
+            "timeout": 10
+          }
+        ]
       }
     ]
   },
@@ -122,11 +132,11 @@
     "mattpocock-skills@mattpocock": true,
     "ponytail@ponytail": false,
     "pstack@cursor-plugins": true,
-    "pyright-lsp@claude-plugins-official": true,
-    "rust-analyzer-lsp@claude-plugins-official": true,
+    "pyright-lsp@claude-plugins-official": false,
+    "rust-analyzer-lsp@claude-plugins-official": false,
     "swift-lsp@claude-plugins-official": false,
     "typesafe@typesafe-ai": true,
-    "warp@claude-code-warp": true
+    "warp@claude-code-warp": false
   },
   "extraKnownMarketplaces": {
     "claude-code-warp": {
