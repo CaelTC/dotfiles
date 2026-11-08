@@ -1,0 +1,45 @@
+{
+  "rules": [
+    {
+      "when": "The task is a trivial mechanical edit such as a rote rename, formatting sweep, targeted typo fix, or simple file gathering.",
+      "use": {
+        "harness": "claude",
+        "model": "haiku",
+        "effort": "low"
+      },
+      "why": "Cheapest fast profile for narrow, low-ambiguity work."
+    },
+    {
+      "when": "The task is ordinary feature or bug-fix work of moderate scope and ambiguity - the common everyday case.",
+      "use": {
+        "harness": "claude",
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "why": "Sonnet 5 at medium effort is the balanced tier for routine coding."
+    },
+    {
+      "when": "The task is a big or ambiguous multi-file feature, a risky refactor, or work that requires holding many moving parts in mind.",
+      "use": {
+        "harness": "claude",
+        "model": "opus",
+        "effort": "high"
+      },
+      "why": "Strongest profile for broad design and implementation work."
+    },
+    {
+      "when": "The task designs something other agents will use or read: agent-facing knowledge structures and conventions (e.g. an AGENTS.md guide, a knowledge base layout, entry templates and schemas agents parse), skills, agent instructions or prompts, or tooling and interfaces whose main consumers are agents.",
+      "use": {
+        "harness": "claude",
+        "model": "opus",
+        "effort": "high"
+      },
+      "why": "Captain standing policy (2026-11-08): design decisions consumed by other agents compound across every later session, so they get the strongest profile."
+    }
+  ],
+  "default": {
+    "harness": "claude",
+    "model": "sonnet",
+    "effort": "medium"
+  }
+}

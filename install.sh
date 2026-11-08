@@ -180,7 +180,7 @@ fi
 # a symlink that leads out of ~/.config/herdr-app. A local copy that differs is
 # backed up first, never clobbered; the app hot-reloads what changes. Re-run
 # install.sh after editing these files in dotfiles.
-herdr_copy() {
+copy_install() {
   local src="$1" dst="$2"
   if [ ! -L "$dst" ] && [ -e "$dst" ] && diff -rq -x gpui-kit.d.ts -x jsconfig.json "$src" "$dst" &>/dev/null; then
     info "Already up to date: $dst"
@@ -205,10 +205,10 @@ herdr_copy() {
 }
 
 HERDR_APP_HOME="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
-herdr_copy "$DOTFILES_DIR/herdr-app/firstmate-flag.svg" "$HERDR_APP_HOME/my-icons/firstmate-flag.svg"
+copy_install "$DOTFILES_DIR/herdr-app/firstmate-flag.svg" "$HERDR_APP_HOME/my-icons/firstmate-flag.svg"
 for mod_dir in "$DOTFILES_DIR"/herdr-app/mods/*/; do
   mod_dir="${mod_dir%/}"
-  herdr_copy "$mod_dir" "$HERDR_APP_HOME/mods/$(basename "$mod_dir")"
+  copy_install "$mod_dir" "$HERDR_APP_HOME/mods/$(basename "$mod_dir")"
 done
 
 # Merge into programs.json (never clobber: back up an existing one first, and
@@ -247,6 +247,20 @@ if [ -L "$FM_LAUNCHER" ]; then
       info "Removed the old firstmate launcher symlink: $FM_LAUNCHER"
       ;;
   esac
+fi
+
+# ── firstmate: crew dispatch tiers ───────────────────────────────────────────
+# firstmate-config/crew-dispatch.json holds only the model/effort tiers
+# firstmate uses when it launches workers, so every machine dispatches the same
+# way. Install it into the firstmate home in this checkout (config/ is
+# gitignored there). Copied, not linked: firstmate's remote secondmate config
+# push refuses a symlinked source (bin/fm-remote-inherit-push.sh). A local copy
+# that differs is backed up first, never clobbered. Re-run install.sh after
+# editing it in dotfiles.
+if [ -f "$DOTFILES_DIR/firstmate/bin/fm-bootstrap.sh" ]; then
+  copy_install "$DOTFILES_DIR/firstmate-config/crew-dispatch.json" "$DOTFILES_DIR/firstmate/config/crew-dispatch.json"
+else
+  warn "firstmate submodule not checked out — skipping crew-dispatch.json (run: git -C \"$DOTFILES_DIR\" submodule update --init firstmate, then re-run)"
 fi
 
 # ── Claude agent tools (axi) ─────────────────────────────────────────────────
