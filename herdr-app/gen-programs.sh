@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Prints the Herdr-app programs.json fragment for this machine's firstmate:
-# a pirate-flag program tinted with a per-machine color.
+# a pirate-flag program tinted with a per-machine color. The my-agents/my-tabs/
+# my-pane mods read its icon color for firstmate's primary (mods/*/firstmate.js).
 #   gen-programs.sh            -> JSON on stdout
 #   FM_HOST=redphone gen-programs.sh   (override the hostname, for testing)
 set -euo pipefail
@@ -33,8 +34,7 @@ jq -n --arg color "$color" '{
       name: "Firstmate",
       icon: "my-icons/firstmate-flag.svg",
       tint: true,
-      color: $color,
-      match: ["firstmate"]
+      color: $color
     }
   }
 }'

@@ -1,17 +1,14 @@
 // A pane's header, for layouts that frame their panes:
 //   { "tab": "active", "pane": { "header": { "content": { "mod": "my-pane" } } } }
-// Shows the program's icon (the app's program table), the agent's name or
+// Shows the program's icon (the app's program table; firstmate's primary gets the pirate
+// flag, see firstmate.js), the agent's name or
 // the terminal's title, the folder, and the agent's status; buttons split, zoom and close
 // this pane. Props from the app: { pane, terminal }. Click: focus the pane.
 
-import { View, div, svg, image } from "gpui-kit";
+import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { panes, props, run, theme, home } from "herdr";
-
-function icon(p, size, color) {
-  if (!p?.icon) return null;
-  return p.tint ? svg(p.icon).size(size).flex_none().text_color(color) : image(p.icon).w(size).h(size).flex_none();
-}
+import { FirstmateFlag, programIcon as icon } from "./firstmate.js";
 
 function folder(cwd) {
   if (!cwd) return "";
@@ -20,7 +17,7 @@ function folder(cwd) {
 }
 
 export default class Pane extends View {
-  init() { this.hovered = false; }
+  init() { this.hovered = false; this.fm = new FirstmateFlag(); }
 
   me() {
     return panes().find((p) => p.pane === props()?.pane);
@@ -44,8 +41,9 @@ export default class Pane extends View {
     const t = theme();
     const p = this.me();
     if (!p) return div();
-    const name = ((p.program?.agent || p.program?.shell) && p.program.name) || p.title || p.program?.name || "shell";
-    const pic = icon(p.program, 14, t.dim);
+    const program = (p.terminal && this.fm.scan(cx).get(p.terminal)) || p.program;
+    const name = ((program?.agent || program?.shell) && program.name) || p.title || program?.name || "shell";
+    const pic = icon(program, 14, t.dim);
     const st = p.status;
     const pane = p.pane;
     return h_flex()

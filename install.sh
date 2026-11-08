@@ -166,24 +166,57 @@ symlink "$DOTFILES_DIR/herdr/config.toml" "$HOME/.config/herdr/config.toml"
 herdr plugin link "$DOTFILES_DIR/herdr/plugins/two-tabs" &>/dev/null || true
 
 # ── Herdr app: firstmate pirate-flag icon ────────────────────────────────────
-# The Herdr desktop app reads ~/.config/herdr-app/programs.json. Firstmate's
-# primary pane is distinguished from ordinary claude panes by process name: a
-# `firstmate` symlink to the claude binary (launch the primary with `firstmate`).
-# The flag is tinted per machine (herdr-app/gen-programs.sh).
+# The Herdr desktop app's agents list, tab bar and pane header are mods
+# (herdr-app/mods/my-{agents,tabs,pane}, used by the my-main layout). They show
+# a pirate flag instead of Claude's icon for an agent running in a firstmate
+# home (see herdr-app/mods/my-pane/firstmate.js), tinted with this machine's
+# color: the `firstmate` entry merged into programs.json (gen-programs.sh).
 if ! command -v jq &>/dev/null; then
   info "Installing jq..."
   pkg_install jq
 fi
 
+# Herdr copies, not links: it refuses to load icons (and mod imports) through
+# a symlink that leads out of ~/.config/herdr-app. A local copy that differs is
+# backed up first, never clobbered; the app hot-reloads what changes. Re-run
+# install.sh after editing these files in dotfiles.
+herdr_copy() {
+  local src="$1" dst="$2"
+  if [ ! -L "$dst" ] && [ -e "$dst" ] && diff -rq -x gpui-kit.d.ts -x jsconfig.json "$src" "$dst" &>/dev/null; then
+    info "Already up to date: $dst"
+    return
+  fi
+  if [ -L "$dst" ]; then
+    rm "$dst"
+  elif [ -e "$dst" ]; then
+    local backup_path="$BACKUP_DIR/${dst/#$HOME\//}"
+    warn "Backing up existing $dst → $backup_path"
+    mkdir -p "$(dirname "$backup_path")"
+    cp -R "$dst" "$backup_path"
+  fi
+  mkdir -p "$(dirname "$dst")"
+  if [ -d "$src" ]; then
+    mkdir -p "$dst"
+    cp -R "$src/." "$dst/"
+  else
+    cp "$src" "$dst"
+  fi
+  info "Installed: $dst"
+}
+
 HERDR_APP_HOME="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
-symlink "$DOTFILES_DIR/herdr-app/firstmate-flag.svg" "$HERDR_APP_HOME/my-icons/firstmate-flag.svg"
+herdr_copy "$DOTFILES_DIR/herdr-app/firstmate-flag.svg" "$HERDR_APP_HOME/my-icons/firstmate-flag.svg"
+for mod_dir in "$DOTFILES_DIR"/herdr-app/mods/*/; do
+  mod_dir="${mod_dir%/}"
+  herdr_copy "$mod_dir" "$HERDR_APP_HOME/mods/$(basename "$mod_dir")"
+done
 
 # Merge into programs.json (never clobber: back up an existing one first, and
-# only touch the `firstmate` entry). Re-running yields the same file.
+# only replace the `firstmate` entry). Re-running yields the same file.
 PROGRAMS_JSON="$HERDR_APP_HOME/programs.json"
 PROGRAMS_NEW="$("$DOTFILES_DIR/herdr-app/gen-programs.sh")"
 if [ -f "$PROGRAMS_JSON" ]; then
-  if merged="$(jq --argjson new "$PROGRAMS_NEW" '. * $new' "$PROGRAMS_JSON" 2>/dev/null)"; then
+  if merged="$(jq --argjson new "$PROGRAMS_NEW" '.programs = ((.programs // {}) + $new.programs)' "$PROGRAMS_JSON" 2>/dev/null)"; then
     if [ "$merged" = "$(jq . "$PROGRAMS_JSON")" ]; then
       info "Already up to date: $PROGRAMS_JSON"
     else
@@ -203,11 +236,17 @@ else
   info "Wrote $PROGRAMS_JSON"
 fi
 
-# `firstmate` launcher: same binary as claude, different process name.
-if CLAUDE_BIN="$(command -v claude 2>/dev/null)"; then
-  symlink "$CLAUDE_BIN" "$HOME/.local/bin/firstmate"
-else
-  warn "claude not found — skipping the firstmate launcher symlink"
+# An earlier version linked a `firstmate` launcher to the claude binary to tell
+# the primary apart by process name; that never worked (Claude's own agent
+# report wins). Remove it, but only while it still points at claude.
+FM_LAUNCHER="$HOME/.local/bin/firstmate"
+if [ -L "$FM_LAUNCHER" ]; then
+  case "$(readlink "$FM_LAUNCHER")" in
+    */bin/claude|*/claude/versions/*)
+      rm "$FM_LAUNCHER"
+      info "Removed the old firstmate launcher symlink: $FM_LAUNCHER"
+      ;;
+  esac
 fi
 
 # ── Claude agent tools (axi) ─────────────────────────────────────────────────

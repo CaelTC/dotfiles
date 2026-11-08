@@ -1,9 +1,10 @@
 // Agents in grouped or priority views; parents take their most urgent sub-agent's place.
 // A viewed done agent stays in Done until left.
 
-import { View, div, image, svg } from "gpui-kit";
+import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, hc, home } from "herdr";
+import { FirstmateFlag, programIcon as icon } from "./firstmate.js";
 
 // cca puts --rc first; "firstmate" is its session name, so the prompt stays a prompt.
 // Keeps one local Firstmate agent running, pinned, in its own space. A bare name is local only.
@@ -80,12 +81,6 @@ function duration(ms) {
   return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
 }
 
-// The agent's icon from the app's program table: a one-color glyph or a picture.
-function icon(p, size, color) {
-  if (!p?.icon) return null;
-  return p.tint ? svg(p.icon).size(size).flex_none().text_color(color) : image(p.icon).w(size).h(size).flex_none();
-}
-
 // A project's name: the last folder of a terminal's live cwd ("~" at a home folder).
 // ponytail: folder name, not the repo root; a subfolder of a repo shows the subfolder.
 function project(cwd) {
@@ -97,6 +92,7 @@ function project(cwd) {
 export default class Agents extends View {
   init(_props, cx) {
     if (props()?.sortMenu) return;
+    this.fm = new FirstmateFlag();
     ensureFirstmate().catch(() => {});
     this.folded = new Set();
     // Each agent's last state and when it changed (ms), kept across restarts.
@@ -207,7 +203,7 @@ export default class Agents extends View {
   subRow(t, s, shown, compact) {
     const k = s.t;
     const st = kidStatus(k, this.listed);
-    const pic = icon(k.program, 14, t.foreground);
+    const pic = icon(this.flags.get(k.address) ?? k.program, 14, t.foreground);
     const on = k.address === shown;
     return h_flex()
       .id(`sub-${k.address}`)
@@ -249,6 +245,8 @@ export default class Agents extends View {
     let list = agents();
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     const all = terminals();
+    // Firstmate's primary shows the pirate flag in its machine's color (firstmate.js).
+    this.flags = this.fm.scan(cx);
     this.migratePins(all);
     const shown = focused()?.agent;
     const now = Date.now();
@@ -315,7 +313,7 @@ export default class Agents extends View {
     }
 
     const row = (a, i, subs = []) => {
-      const pic = icon(a.program, 16, t.foreground);
+      const pic = icon(this.flags.get(a.address) ?? a.program, 16, t.foreground);
       const more = detail.get(a.address);
       // An agent on another machine (`vps/t7`) says which.
       const machine = a.address.includes("/") ? a.address.split("/")[0] : null;

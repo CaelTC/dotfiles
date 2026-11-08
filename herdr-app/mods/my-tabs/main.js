@@ -1,6 +1,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings } from "herdr";
+import { FirstmateFlag } from "./firstmate.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -22,6 +23,7 @@ function project(cwd) {
 export default class Tabs extends View {
   init() {
     this.pressed = null;
+    this.fm = new FirstmateFlag();
     this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
   }
 
@@ -53,8 +55,9 @@ export default class Tabs extends View {
     localStorage.setItem("panels", JSON.stringify(this.panels));
   }
 
-  render() {
+  render(cx) {
     const t = theme();
+    const flags = this.fm.scan(cx);
     const space = spaces().find(p => p.active);
     const shown = space?.tabs ?? [];
     const stop = (_e, cx) => cx.stop_propagation();
@@ -62,7 +65,8 @@ export default class Tabs extends View {
       .on_mouse_down("left", stop).on_click(action).child(label);
     const item = (c, i) => {
       const lead = panes().find(p => p.tab === c.id && p.program?.agent) ?? panes().find(p => p.tab === c.id && p.terminal);
-      const program = lead?.program;
+      // Firstmate's primary shows the pirate flag in its machine's color (firstmate.js).
+      const program = flags.get(lead?.terminal) ?? lead?.program;
       const name = c.named ? c.name : project(lead?.cwd) ?? space.name;
       return h_flex().id(`tab-${c.id}`).h(29).px(10).gap(7).rounded(7).items_center().flex_none().text_size(12.8)
         .border(1).border_color(c.active ? t.border : t.chrome).bg(c.active ? t.raised : t.chrome).text_color(c.active ? t.foreground : t.muted)
@@ -74,7 +78,7 @@ export default class Tabs extends View {
           else run("tab.select", { id: c.id });
         })
         .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openOverlay({ mod: "menu", kind: "popup", width: 200, props: { tab: "tab", target: { id: c.id, space: space.id } } }); })
-        .when(Boolean(program?.icon), el => el.child(program.tint ? svg(program.icon).size(14).text_color(t.muted) : image(program.icon).size(14)))
+        .when(Boolean(program?.icon), el => el.child(program.tint ? svg(program.icon).size(14).text_color(program.flag && program.color ? program.color : t.muted) : image(program.icon).size(14)))
         .child(div().max_w(170).truncate().child(c.zoomed ? `${name} Z` : name))
         .when(c.status === "working", el => el.child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900)))
         .when(c.status === "blocked" || c.status === "done", el => el.child(div().size(6).rounded(3).bg(t[c.status])))
