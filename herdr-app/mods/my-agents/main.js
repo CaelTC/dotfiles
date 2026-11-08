@@ -318,6 +318,8 @@ export default class Agents extends View {
       // An agent on another machine (`vps/t7`) says which.
       const machine = a.address.includes("/") ? a.address.split("/")[0] : null;
       if (collapsed) {
+        // The rail shows no icons, except firstmate's pirate flag.
+        const flag = this.flags.get(a.address);
         return h_flex()
           .id(`ag-${a.address}`)
           .h(26)
@@ -327,6 +329,7 @@ export default class Agents extends View {
           .gap(4)
           .hover((s) => s.bg(t.hover))
           .on_click(() => run("pane.focus", { pane: a.pane }))
+          .when(Boolean(flag), (el) => el.child(icon(flag, 14, t.foreground)))
           .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(proj(a)))
           .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
       }
