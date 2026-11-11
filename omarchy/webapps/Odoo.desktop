@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Name=Odoo
+Comment=Odoo
+Exec=omarchy-launch-webapp https://nootka.odoo.com
+Terminal=false
+Type=Application
+Icon=odoo-logo
+StartupNotify=true

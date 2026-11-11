@@ -1,0 +1,103 @@
+{
+  "bar": {
+    "centerAnchor": "notch",
+    "layout": {
+      "center": [
+        {
+          "exec": "~/.config/omarchy/bar/scripts/fzl",
+          "id": "fzl",
+          "interval": 900,
+          "onClick": "xdg-open https://whistlerpeak.com/temps/",
+          "tooltip": "Freezing level",
+          "type": "command"
+        },
+        {
+          "id": "omarchy.weather"
+        },
+        {
+          "exec": "~/.config/omarchy/bar/scripts/fzl --wind",
+          "id": "wind",
+          "interval": 900,
+          "onClick": "xdg-open https://whistlerpeak.com/temps/",
+          "tooltip": "Peak wind",
+          "type": "command"
+        },
+        {
+          "id": "notch",
+          "size": 230,
+          "type": "qml"
+        },
+        {
+          "id": "omarchy.clock",
+          "birthYear": 1993,
+          "format": "HH:mm",
+          "formatAlt": "d MMMM 'W'ww yyyy",
+          "lifeExpectancy": 90,
+          "verticalFormat": "HH\n—\nmm"
+        }
+      ],
+      "left": [
+        {
+          "id": "omarchy.menu"
+        },
+        {
+          "id": "omarchy.workspaces"
+        }
+      ],
+      "right": [
+        {
+          "id": "omarchy.system-update"
+        },
+        {
+          "id": "omarchy.indicators"
+        },
+        {
+          "id": "omarchy.keyboard-layout"
+        },
+        {
+          "id": "omarchy.tray"
+        },
+        {
+          "id": "omarchy.tailscale"
+        },
+        {
+          "id": "cael.agents",
+          "refreshIntervalSec": 60
+        },
+        {
+          "id": "omarchy.bluetooth"
+        },
+        {
+          "id": "omarchy.network"
+        },
+        {
+          "id": "omarchy.audio"
+        },
+        {
+          "id": "omarchy.monitor"
+        },
+        {
+          "id": "omarchy.power"
+        }
+      ]
+    },
+    "position": "top",
+    "transparent": true
+  },
+  "cloneSourceRestores": [
+    "cael.lock"
+  ],
+  "disabledPlugins": [
+    "omarchy.lock"
+  ],
+  "idle": {
+    "lock": 300,
+    "screensaver": 150
+  },
+  "plugins": [
+    {
+      "id": "cael.lock"
+    }
+  ],
+  "version": 1
+}

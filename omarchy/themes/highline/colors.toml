@@ -1,0 +1,35 @@
+# Highline -- alpine granite in shadow, sunrise above the cloud sea.
+# Sampled from two summit highline photos: cold blue-slate rock and snow,
+# warm gold sun, orange windsock.
+
+mode = "dark"
+
+accent = "#e0a86a"
+selection = "#2b3b4e"
+muted = "#4d5d70"
+
+background = "#141c26"
+dark_background = "#0f151d"
+darker_background = "#0a0e14"
+lighter_background = "#223040"
+
+foreground = "#d3dbe4"
+dark_foreground = "#6b7b8d"
+light_foreground = "#b2bfcc"
+bright_foreground = "#eef3f8"
+
+red = "#d9604b"
+yellow = "#e8c07a"
+orange = "#e8874a"
+green = "#93ad8f"
+cyan = "#7fb3c8"
+blue = "#72a4ce"
+magenta = "#c294a8"
+brown = "#8b7765"
+
+bright_red = "#ec7a63"
+bright_yellow = "#f2d095"
+bright_green = "#a9c2a4"
+bright_cyan = "#98c8da"
+bright_blue = "#8fbbe0"
+bright_magenta = "#d5aabc"

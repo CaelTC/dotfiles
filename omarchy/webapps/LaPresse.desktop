@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Name=LaPresse
+Comment=LaPresse
+Exec=omarchy-launch-webapp https://lapresse.ca
+Terminal=false
+Type=Application
+Icon=lapresse
+StartupNotify=true

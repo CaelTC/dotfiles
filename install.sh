@@ -137,6 +137,36 @@ else
   symlink "$DOTFILES_DIR/claude-dash/bin/ccagent" "$HOME/.local/bin/ccagent"
 fi
 
+# ── Omarchy (Linux desktop) ──────────────────────────────────────────────────
+# Only the files that differ from Omarchy's shipped defaults. The replaced
+# defaults land in .backup/, so diff against them after an Omarchy upgrade.
+# Theme backgrounds are personal photos and stay out of this public repo:
+# restore them into ~/.config/omarchy/themes/highline/backgrounds/ by hand.
+if command -v omarchy &>/dev/null; then
+  for f in "$DOTFILES_DIR"/omarchy/hypr/*.lua; do
+    symlink "$f" "$HOME/.config/hypr/$(basename "$f")"
+  done
+  for f in shell.json shell.toml lockscreen.jpg branding/screensaver.txt bar/modules/notch.qml defaults/agent; do
+    symlink "$DOTFILES_DIR/omarchy/$f" "$HOME/.config/omarchy/$f"
+  done
+  for plugin in "$DOTFILES_DIR"/omarchy/plugins/*/; do
+    symlink "${plugin%/}" "$HOME/.config/omarchy/plugins/$(basename "$plugin")"
+  done
+  for f in "$DOTFILES_DIR"/omarchy/themes/highline/*; do
+    symlink "$f" "$HOME/.config/omarchy/themes/highline/$(basename "$f")"
+  done
+  # Clock screensaver; hypr/hyprland.lua puts this dir ahead of $OMARCHY_PATH/bin.
+  symlink "$DOTFILES_DIR/omarchy/bin/omarchy-screensaver" "$HOME/.local/share/omarchy-overrides/bin/omarchy-screensaver"
+  for f in "$DOTFILES_DIR"/omarchy/webapps/*.desktop; do
+    symlink "$f" "$HOME/.local/share/applications/$(basename "$f")"
+  done
+  for f in "$DOTFILES_DIR"/omarchy/webapps/icons/*.png; do
+    symlink "$f" "$HOME/.local/share/icons/hicolor/256x256/apps/$(basename "$f")"
+  done
+  symlink "$DOTFILES_DIR/tmux/tmux.conf" "$HOME/.config/tmux/tmux.conf"
+  symlink "$DOTFILES_DIR/voxtype/config.toml" "$HOME/.config/voxtype/config.toml"
+fi
+
 # ── fzl (Whistler freezing level / wind bar widget) ──────────────────────────
 symlink "$DOTFILES_DIR/fzl/fzl" "$HOME/.local/bin/fzl"
 if [ "$OS" = "Darwin" ]; then
