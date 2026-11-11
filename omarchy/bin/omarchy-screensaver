@@ -1,0 +1,98 @@
+#!/bin/bash
+
+# Clock screensaver: shadows the stock one via PATH prepend in ~/.config/hypr/hyprland.lua.
+# Colors follow the current Omarchy theme. A random ttfx effect plays on each new
+# minute, with a highlight sweep in between. Exits on any key or losing focus.
+
+screensaver_in_focus() {
+  hyprctl activewindow -j | jq -e '.class == "org.omarchy.screensaver"' >/dev/null 2>&1
+}
+
+exit_screensaver() {
+  hyprctl eval 'hl.config({ cursor = { invisible = false } })' &>/dev/null || hyprctl keyword cursor:invisible false &>/dev/null || true
+  printf '\033[?25h'
+  pkill -t "${tty#/dev/}" -x ttfx 2>/dev/null
+  pkill -f '[o]rg.omarchy.screensaver' 2>/dev/null
+  exit 0
+}
+
+trap exit_screensaver SIGINT SIGTERM SIGHUP SIGQUIT
+
+color() { # $1=key in colors.toml, $2=fallback; prints hex without '#'
+  local v
+  v=$(sed -n "s/^$1 *= *\"#\?\([0-9a-fA-F]\{6\}\)\".*/\1/p" ~/.local/state/omarchy/current/theme/colors.toml 2>/dev/null)
+  echo "${v:-$2}"
+}
+
+BG=$(color background 000000)
+GRADIENT=("$(color orange e8874a)" "$(color accent e0a86a)" "$(color yellow e8c07a)" "$(color bright_foreground ffffff)")
+# Effects that land cleanly on a short, wide block of text
+EFFECTS=(beams binarypath burn decrypt errorcorrect expand laseretch middleout pour rain scattered slice slide spray swarm sweep unstable vhstape waves wipe)
+
+printf '\033]11;rgb:%s/%s/%s\007\033[?25l' "${BG:0:2}" "${BG:2:2}" "${BG:4:2}"
+hyprctl eval 'hl.config({ cursor = { invisible = true } })' &>/dev/null || hyprctl keyword cursor:invisible true &>/dev/null
+
+tty=$(tty 2>/dev/null)
+
+# Same terminal-resize wait as the stock screensaver (ttfx measures once at start)
+deadline=$((SECONDS + 2))
+while ((SECONDS < deadline)) && [[ $(stty size 2>/dev/null) == "24 80" ]]; do sleep 0.02; done
+
+# 5-row glyphs for 0-9 and ':'; rendered at 2x
+G=(
+  "█████ █   █ █   █ █   █ █████"
+  "    █     █     █     █     █"
+  "█████     █ █████ █     █████"
+  "█████     █ █████     █ █████"
+  "█   █ █   █ █████     █     █"
+  "█████ █     █████     █ █████"
+  "█████ █     █████ █   █ █████"
+  "█████     █     █     █     █"
+  "█████ █   █ █████ █   █ █████"
+  "█████ █   █ █████     █ █████"
+)
+COLON="      █       █     "
+
+glyph_row() { # $1=char $2=row
+  if [[ $1 == : ]]; then printf '%s' "${COLON:$(($2 * 4)):4}"
+  else printf '%s' "${G[$1]:$(($2 * 6)):5}"; fi
+}
+
+clock_file=$(mktemp)
+render_clock() { # $1=HH:MM
+  local r i line
+  for r in 0 1 2 3 4; do
+    line=""
+    for ((i = 0; i < ${#1}; i++)); do line+="$(glyph_row "${1:i:1}" $r)  "; done
+    line=$(sed 's/./&&/g' <<<"${line%  }")
+    printf '%s\n%s\n' "$line" "$line"
+  done >"$clock_file"
+}
+
+run_effect() { # $1=effect
+  # Global options before the effect name, effect options after it
+  ttfx -i "$clock_file" \
+    --frame-rate 60 --canvas-width 0 --canvas-height 0 --reuse-canvas --anchor-canvas c --anchor-text c \
+    --terminal-background-color "$BG" --no-eol --no-restore-cursor \
+    "$1" --final-gradient-stops "${GRADIENT[@]}" --final-gradient-direction horizontal &
+  # Keep watching input while the effect plays, then until the next tick
+  local until=$((SECONDS + 15))
+  while pgrep -t "${tty#/dev/}" -x ttfx >/dev/null || { ((SECONDS < until)) && [[ $(date +%H:%M) == "$shown" ]]; }; do
+    if read -rsn1 -t 1 || ! screensaver_in_focus; then
+      exit_screensaver
+    fi
+  done
+}
+
+shown=""
+while true; do
+  now=$(date +%H:%M)
+  if [[ $now != "$shown" ]]; then
+    shown=$now
+    render_clock "$now"
+    printf '\033[2J'
+    run_effect "${EFFECTS[RANDOM % ${#EFFECTS[@]}]}"
+  else
+    run_effect highlight
+  fi
+done

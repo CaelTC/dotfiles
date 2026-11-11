@@ -1,14 +1,26 @@
+# Omarchy (Linux): OMARCHY_PATH plus the PATH entries for mise shims and
+# ~/.local/bin, then the stock zsh options/aliases/functions. Mirrors what
+# ~/.bashrc sources; without it a symlinked .zshrc loses the whole Omarchy
+# environment. No-op on macOS, and env-bootstrap only appends to PATH, so the
+# prepends further down still win.
+[ -r /usr/share/omarchy/default/bash/env-bootstrap ] && . /usr/share/omarchy/default/bash/env-bootstrap
+[ -r "${OMARCHY_PATH:-/usr/share/omarchy}/default/zsh/rc" ] && . "${OMARCHY_PATH:-/usr/share/omarchy}/default/zsh/rc"
+
 alias g="git"
 # cca is the claude-dash wrapper at ~/.local/bin/cca (passes --permission-mode
 # bypassPermissions through to claude behind the capture proxy). No alias — an alias would
 # shadow the wrapper and silently disable dashboard capture.
 
-command -v starship >/dev/null && eval "$(starship init zsh)"
+[ -z "$STARSHIP_SHELL" ] && command -v starship >/dev/null && eval "$(starship init zsh)"
 if command -v brew >/dev/null; then
   source "$(brew --prefix)/share/zsh-autosuggestions/zsh-autosuggestions.zsh"
   PQ_LIB_DIR="$(brew --prefix libpq)/lib"
 elif [ -f /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh ]; then
+  # Debian/Ubuntu layout
   source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh
+elif [ -f /usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh ]; then
+  # Arch layout
+  source /usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh
 fi
 
 export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
@@ -43,19 +55,22 @@ if [[ -o interactive && -n "$SSH_TTY" && -z "$TMUX" ]] && command -v tmux >/dev/
   exec tmux new-session -A -s main
 fi
 
-cd() {
+# cd goes through Omarchy's zoxide wrapper (zd), but `...` is expanded to ../..
+# first - zd would treat bare dots as a zoxide query instead of a parent walk.
+# Aliased rather than named cd(): `cd() {` is a parse error while cd is aliased.
+_cd() {
     if [[ $1 =~ '^\.{3,}$' ]]; then
-        local dots=${#1}
-        local target=".."
-        for ((i=2; i<dots; i++)); do
+        local target=".." i
+        for ((i=2; i<${#1}; i++)); do
             target+="/.."
         done
-        builtin cd "$target" && ls -C
+        builtin cd "$target"
     else
-        builtin cd "$@" && ls -C
+        zd "$@"
     fi
 }
-command -v mise >/dev/null && eval "$(mise activate zsh)"
+alias cd="_cd"
+[ -z "$MISE_SHELL" ] && command -v mise >/dev/null && eval "$(mise activate zsh)"
 
 # initialize completion system (must run before sourcing completion files)
 autoload -Uz compinit && compinit
@@ -103,3 +118,11 @@ gnhf() {
 # Android SDK (added for nootka-kiosk project)
 export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
 export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
+
+# ls on every cd (hook, so it survives a later chpwd redefinition and covers z/pushd)
+autoload -Uz add-zsh-hook
+_ls_on_cd() { eza -lh --group-directories-first --icons=auto }
+add-zsh-hook chpwd _ls_on_cd
+export PICO_SDK_PATH="$HOME/pico-sdk"
+export PATH="$HOME/.local/opt/arm-gnu-toolchain/bin:$PATH"
+export PATH="$HOME/.local/opt/cmake/bin:$PATH"

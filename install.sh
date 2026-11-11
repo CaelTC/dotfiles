@@ -113,7 +113,7 @@ for skill in "$DOTFILES_DIR"/claude/skills/*/; do
 done
 
 # nootkify skill lives in a private repo (brand assets), not in this public one
-NOOTKIFY_DIR="$HOME/dev/nootkify"
+NOOTKIFY_DIR="$HOME/Projects/nootkify"
 if [ ! -d "$NOOTKIFY_DIR/.git" ]; then
   info "Cloning nootkify..."
   git clone git@github.com:CaelTC/nootkify.git "$NOOTKIFY_DIR" || warn "nootkify clone failed (private repo — need ssh access)"
@@ -135,6 +135,46 @@ else
   symlink "$DOTFILES_DIR/claude-dash/target/release/claude-dash" "$HOME/.local/bin/claude-dash"
   symlink "$DOTFILES_DIR/claude-dash/bin/cca" "$HOME/.local/bin/cca"
   symlink "$DOTFILES_DIR/claude-dash/bin/ccagent" "$HOME/.local/bin/ccagent"
+fi
+
+# ── Omarchy (Linux desktop) ──────────────────────────────────────────────────
+# Only the files that differ from Omarchy's shipped defaults. The replaced
+# defaults land in .backup/, so diff against them after an Omarchy upgrade.
+# Theme backgrounds are personal photos and stay out of this public repo:
+# restore them into ~/.config/omarchy/themes/highline/backgrounds/ by hand.
+if command -v omarchy &>/dev/null; then
+  for f in "$DOTFILES_DIR"/omarchy/hypr/*.lua; do
+    symlink "$f" "$HOME/.config/hypr/$(basename "$f")"
+  done
+  for f in shell.json shell.toml lockscreen.jpg branding/screensaver.txt bar/modules/notch.qml defaults/agent; do
+    symlink "$DOTFILES_DIR/omarchy/$f" "$HOME/.config/omarchy/$f"
+  done
+  for plugin in "$DOTFILES_DIR"/omarchy/plugins/*/; do
+    symlink "${plugin%/}" "$HOME/.config/omarchy/plugins/$(basename "$plugin")"
+  done
+  for f in "$DOTFILES_DIR"/omarchy/themes/highline/*; do
+    symlink "$f" "$HOME/.config/omarchy/themes/highline/$(basename "$f")"
+  done
+  # Clock screensaver; hypr/hyprland.lua puts this dir ahead of $OMARCHY_PATH/bin.
+  symlink "$DOTFILES_DIR/omarchy/bin/omarchy-screensaver" "$HOME/.local/share/omarchy-overrides/bin/omarchy-screensaver"
+  for f in "$DOTFILES_DIR"/omarchy/webapps/*.desktop; do
+    symlink "$f" "$HOME/.local/share/applications/$(basename "$f")"
+  done
+  for f in "$DOTFILES_DIR"/omarchy/webapps/icons/*.png; do
+    symlink "$f" "$HOME/.local/share/icons/hicolor/256x256/apps/$(basename "$f")"
+  done
+  symlink "$DOTFILES_DIR/tmux/tmux.conf" "$HOME/.config/tmux/tmux.conf"
+  symlink "$DOTFILES_DIR/voxtype/config.toml" "$HOME/.config/voxtype/config.toml"
+fi
+
+# ── fzl (Whistler freezing level / wind bar widget) ──────────────────────────
+symlink "$DOTFILES_DIR/fzl/fzl" "$HOME/.local/bin/fzl"
+if [ "$OS" = "Darwin" ]; then
+  [ -d /Applications/SwiftBar.app ] || { info "Installing SwiftBar..."; brew install --cask swiftbar; }
+  symlink "$DOTFILES_DIR/fzl/swiftbar/fzl.15m.sh" "$HOME/Library/Application Support/SwiftBar/Plugins/fzl.15m.sh"
+else
+  # Omarchy bar: ~/.config/omarchy/shell.json runs it as `command` widgets fzl / wind.
+  symlink "$DOTFILES_DIR/fzl/fzl" "$HOME/.config/omarchy/bar/scripts/fzl"
 fi
 
 # ── treehouse ────────────────────────────────────────────────────────────────
@@ -365,6 +405,10 @@ symlink "$DOTFILES_DIR/starship/starship.toml" "$HOME/.config/starship.toml"
 # starship prompt never stalls past command_timeout on cd.
 git config --global core.fsmonitor true
 git config --global core.untrackedCache true
+
+git config --global alias.cam 'commit -am'
+git config --global alias.pl pull
+git config --global alias.ps push
 
 echo ""
 echo "────────────────────────────────────────"

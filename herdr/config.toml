@@ -1,3 +1,5 @@
+onboarding = false
+
 # herdr configuration
 # Place this file at ~/.config/herdr/config.toml
 
