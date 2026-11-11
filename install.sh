@@ -113,7 +113,7 @@ for skill in "$DOTFILES_DIR"/claude/skills/*/; do
 done
 
 # nootkify skill lives in a private repo (brand assets), not in this public one
-NOOTKIFY_DIR="$HOME/dev/nootkify"
+NOOTKIFY_DIR="$HOME/Projects/nootkify"
 if [ ! -d "$NOOTKIFY_DIR/.git" ]; then
   info "Cloning nootkify..."
   git clone git@github.com:CaelTC/nootkify.git "$NOOTKIFY_DIR" || warn "nootkify clone failed (private repo — need ssh access)"
@@ -135,6 +135,16 @@ else
   symlink "$DOTFILES_DIR/claude-dash/target/release/claude-dash" "$HOME/.local/bin/claude-dash"
   symlink "$DOTFILES_DIR/claude-dash/bin/cca" "$HOME/.local/bin/cca"
   symlink "$DOTFILES_DIR/claude-dash/bin/ccagent" "$HOME/.local/bin/ccagent"
+fi
+
+# ── fzl (Whistler freezing level / wind bar widget) ──────────────────────────
+symlink "$DOTFILES_DIR/fzl/fzl" "$HOME/.local/bin/fzl"
+if [ "$OS" = "Darwin" ]; then
+  [ -d /Applications/SwiftBar.app ] || { info "Installing SwiftBar..."; brew install --cask swiftbar; }
+  symlink "$DOTFILES_DIR/fzl/swiftbar/fzl.15m.sh" "$HOME/Library/Application Support/SwiftBar/Plugins/fzl.15m.sh"
+else
+  # Omarchy bar: ~/.config/omarchy/shell.json runs it as `command` widgets fzl / wind.
+  symlink "$DOTFILES_DIR/fzl/fzl" "$HOME/.config/omarchy/bar/scripts/fzl"
 fi
 
 # ── treehouse ────────────────────────────────────────────────────────────────
@@ -267,6 +277,10 @@ symlink "$DOTFILES_DIR/starship/starship.toml" "$HOME/.config/starship.toml"
 # starship prompt never stalls past command_timeout on cd.
 git config --global core.fsmonitor true
 git config --global core.untrackedCache true
+
+git config --global alias.cam 'commit -am'
+git config --global alias.pl pull
+git config --global alias.ps push
 
 echo ""
 echo "────────────────────────────────────────"

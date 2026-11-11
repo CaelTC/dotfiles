@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""Freezing level for the Omarchy bar.
+
+Measured: linear interpolation between the two whistlerpeak.com stations that
+bracket 0C (lowest crossing wins). Whistler is the source of truth; only when
+it can't bracket 0C (all above, or no data) add avalanche.ca's Blowdown Peak
+(2320m, Duffey). Still above the top station: extrapolate up from it at LAPSE,
+shown with a ≈ prefix. Below the bottom one or no data: fall back to the
+AlpineConditions Blend model at Squamish, shown with a ~ prefix.
+
+Modes: (none) Omarchy bar JSON, --wind Omarchy wind JSON, --swiftbar macOS
+SwiftBar menu (see swiftbar/fzl.15m.sh), --test self-check.
+"""
+import functools, json, re, sys, time, urllib.error, urllib.request
+from datetime import datetime, timezone
+
+# ponytail: elevations hardcoded from whistlerpeak.com/temps/<id>/plot_block.php
+ELEV = {"seventh": 2284, "symphony": 2263, "peak": 2182, "harmony": 2103,
+        "rendezvous": 1860, "rhl": 1850, "crystal": 1845, "pigalley": 1650,
+        "catskinner": 1550, "olympic": 1003, "base": 675, "blowdown": 2320}
+LAPSE = 6.5 / 1000  # ponytail: standard lapse C/m; ~5.5 in saturated air, tune if ≈ reads off
+BLOWDOWN = "https://weather.prod.avalanche.ca/stations/19/measurements"  # avalanche.ca/map?panel=weather-stations/19
+SQUAMISH = ("https://apigateway.alpineconditions.com/weatherforecastapi/weatherForecast"
+            "?latitude=49.7133&longitude=-123.1305&weatherModels=Blend")
+
+
+def fetch(url, data=None, tries=6):
+    req = urllib.request.Request(url, data=data, headers={"User-Agent": "omarchy-fzl"})
+    for i in range(tries):
+        try:
+            return urllib.request.urlopen(req, timeout=15).read().decode()
+        except urllib.error.URLError:
+            if i == tries - 1:
+                raise
+            time.sleep(10)  # ponytail: boot races the network; ~1 min of retries covers it
+
+
+@functools.lru_cache(maxsize=None)  # --swiftbar needs it for both fzl and wind
+def stations():
+    html = fetch("https://whistlerpeak.com/temps/script.php", b"localStorageValue=card")
+    pat = re.compile(r"id='(\w+)'.*?class='direction (\w*)'.*?class='metric'>\s*(-?[\d.]+)&deg;"
+                     r".*?class='temp-wind[^']*'>([\d.]+)", re.S)
+    return {sid: (float(t), d, float(w)) for sid, d, t, w in pat.findall(html) if sid in ELEV}
+
+
+def blowdown():
+    """Latest hourly air temp (C) at Blowdown Peak."""
+    m = max(json.loads(fetch(BLOWDOWN, tries=1)), key=lambda r: r["measurementDateTime"])
+    return float(m["airTempAvg"])
+
+
+def alpine():
+    """AlpineConditions Blend freezing level (m) for the current hour at Squamish."""
+    b = json.loads(fetch(SQUAMISH))["blendSummary"]["blend"]
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:00:00Z")
+    times = b["forecastDataDateTimeUtc"]
+    i = times.index(now) if now in times else 0
+    return round(b["freezingLevel"][i])
+
+
+def freezing_level(temps):
+    """temps: {station_id: degC} -> (metres|None, status)."""
+    prof = sorted((ELEV[s], t) for s, t in temps.items())
+    if not prof:
+        return None, "no data"
+    inversion = any(prof[i + 1][1] > prof[i][1] for i in range(len(prof) - 1))
+    for (z0, t0), (z1, t1) in zip(prof, prof[1:]):
+        if (t0 >= 0) != (t1 >= 0):
+            fzl = z0 + t0 / (t0 - t1) * (z1 - z0)
+            return round(fzl), "inversion" if inversion else "ok"
+    if prof[0][1] < 0:
+        return None, f"below {prof[0][0]}m"
+    z, t = prof[-1]
+    return round(z + t / LAPSE), "extrapolated"
+
+
+def wind():
+    """-> (text, tooltip)"""
+    try:
+        st = stations()
+    except Exception as e:
+        return f"wind {type(e).__name__}", ""
+    t, d, w = st["peak"]
+    rows = [f"{ELEV[s]:>5}m {st[s][2]:>4.0f} km/h {st[s][1]:<3} {s}" for s in sorted(st, key=ELEV.get, reverse=True)]
+    return f"{w:.0f} {d}", "Peak wind (km/h)\n" + "\n".join(rows)
+
+
+def fzl():
+    """-> (text, tooltip, status)"""
+    try:
+        temps = {s: v[0] for s, v in stations().items()}
+    except Exception:  # network/parse failure: Blowdown below may still answer
+        temps = {}
+    fzl, status = freezing_level(temps)
+    if status in ("extrapolated", "no data"):  # Whistler can't bracket 0C
+        try:
+            temps["blowdown"] = blowdown()
+            fzl, status = freezing_level(temps)
+        except Exception:
+            pass
+    try:
+        squamish = f"~{alpine()}m"
+    except Exception:
+        squamish = "n/a"
+
+    text = f"{'≈' if status == 'extrapolated' else ''}{fzl}m" if fzl is not None else squamish if squamish != "n/a" else status
+    if status == "inversion":
+        text += " ⇅"
+    rows = [f"{ELEV[s]:>5}m {temps[s]:>5.1f}°  {s}" for s in sorted(temps, key=ELEV.get, reverse=True)]
+    tooltip = "\n".join([f"Stations (measured): {status}", *rows,
+                         f"AlpineConditions Blend, Squamish: {squamish}"])
+    return text, tooltip, status
+
+
+def swiftbar():
+    """Menu bar: '❄ 1850m · 76 SSE'; dropdown = both tooltips + link."""
+    text, tooltip, _ = fzl()
+    wtext, wtip = wind()
+    out = [f"❄ {text} · {wtext}", "---"]
+    for tip in (tooltip, wtip):
+        out += [f"{line} | font=Menlo size=12" for line in tip.splitlines()] + ["---"]
+    out.append("whistlerpeak.com/temps | href=https://whistlerpeak.com/temps/")
+    print("\n".join(out))
+
+
+def test():
+    assert freezing_level({"peak": -2.0, "rhl": 0.0, "base": 5.0}) == (1850, "ok")
+    assert freezing_level({"peak": -1.0, "rhl": 1.0, "base": 5.0}) == (2016, "ok")
+    assert freezing_level({"peak": 1.3, "rhl": 3.0, "base": 5.0}) == (2382, "extrapolated")
+    assert freezing_level({"peak": -5.0, "base": -1.0}) == (None, "below 675m")
+    assert freezing_level({"peak": 1.0, "rhl": 2.0, "base": -3.0}) == (1380, "inversion")
+    assert freezing_level({"peak": 1.0}) == (2336, "extrapolated")
+    assert freezing_level({}) == (None, "no data")
+    print("ok")
+
+
+if __name__ == "__main__":
+    if "--test" in sys.argv:
+        test()
+    elif "--swiftbar" in sys.argv:
+        swiftbar()
+    elif "--wind" in sys.argv:
+        print(json.dumps(dict(zip(("text", "tooltip"), wind()))))
+    else:
+        text, tooltip, status = fzl()
+        print(json.dumps({"text": text, "tooltip": tooltip, "class": status.split()[0]}))
