@@ -170,7 +170,7 @@
       "autoCompactWindow": 100000
     },
     "claude-opus-5-5": {
-      "effortLevel": "high"
+      "effortLevel": "medium"
     },
     "claude-sonnet-5-5": {
       "effortLevel": "high"
@@ -183,6 +183,7 @@
   },
   "skipDangerousModePermissionPrompt": true,
   "skipWorkflowUsageWarning": true,
+  "theme": "dark",
   "editorMode": "vim",
   "autoMode": {
     "environment": [
