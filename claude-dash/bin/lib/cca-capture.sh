@@ -30,16 +30,15 @@
 # How long to wait for the Proxy to report it bound its port before giving up and
 # launching claude directly (fail-open). Kept small so a failing Proxy never
 # delays claude noticeably.
-local -r ready_timeout_secs=2
+ready_timeout_secs=2
 
 # The capture binary. Overridable for dev (point at target/{debug,release}).
-local dash="${CLAUDE_DASH_BIN:-claude-dash}"
+dash="${CLAUDE_DASH_BIN:-claude-dash}"
 
 # The permission behavior, resolved once into the args prepended to `claude`.
 # force-bypass (cca): `--permission-mode bypassPermissions`. passthrough (ccagent): nothing —
 # the caller's args flow straight through so an agent can pass
 # `--dangerously-skip-permissions`.
-local -a claude_perm
 if [[ "$_cca_perm" == "force-bypass" ]]; then
   claude_perm=(--permission-mode bypassPermissions)
 else
@@ -49,7 +48,6 @@ fi
 # The Session's Origin, resolved once into the args passed to `record-start`.
 # agent (ccagent) tags the start record Origin=Agent; human (cca) passes nothing and
 # the record defaults to Human.
-local -a record_origin
 if [[ "$_cca_origin" == "agent" ]]; then
   record_origin=(--agent)
 else
@@ -62,20 +60,18 @@ fi
 # with the caller's permission behavior. This is the one definition of the
 # fail-open launch contract.
 fail_open() {
-  print -u2 "${_cca_prog}: $1; launching claude without capture"
+  echo "${_cca_prog}: $1; launching claude without capture" >&2
   shift
-  exec claude "${claude_perm[@]}" "$@"
+  exec claude ${claude_perm[@]+"${claude_perm[@]}"} "$@"
 }
 
 # 1. Mint a short, filename-safe, human-labelable Session id (first 8 hex of a uuid).
-local id
 id="$(uuidgen | tr 'A-Z' 'a-z' | tr -d '-')"
-id="${id[1,8]}"
+id="${id:0:8}"
 
 # 2. Pick a free localhost port. Bind port 0 in a throwaway socket and read back
 #    the port the OS assigned — the small TOCTOU window before the proxy rebinds
 #    it is acceptable for a single-user dev tool (and slice 05 adds fail-open).
-local port
 port="$(
   python3 - <<'PY' 2>/dev/null
 import socket
@@ -89,19 +85,18 @@ if [[ -z "$port" ]]; then
   fail_open "could not pick a free port" "$@"
 fi
 
-local base_url="http://127.0.0.1:${port}"
-local cwd="$PWD"
-local project="${PWD:t}"   # zsh: basename of cwd
+base_url="http://127.0.0.1:${port}"
+cwd="$PWD"
+project="${PWD##*/}"   # basename of cwd
 
 # 3. Start the per-Session Proxy in the background on the chosen port. Capture its
 #    stdout to a temp file so we can wait on the Proxy's machine-readable `READY`
 #    line (printed once it has bound the port). The Proxy's stdout/stderr are
 #    ours to consume — separate from claude's stdio, so this never corrupts what
 #    the client sees.
-local ready_log
 ready_log="$(mktemp -t cca-ready.XXXXXX)"
 "$dash" proxy --addr "127.0.0.1:${port}" --id "$id" >"$ready_log" 2>/dev/null &
-local proxy_pid=$!
+proxy_pid=$!
 
 # 4. Wait — with a bounded timeout — for the Proxy to confirm it bound its port.
 #    We poll the captured stdout for the `READY` line rather than probing the TCP
@@ -110,9 +105,9 @@ local proxy_pid=$!
 #    answered by some unrelated process that grabbed a reused port). The loop is
 #    strictly bounded by ready_timeout_secs and also bails the instant the Proxy
 #    process dies, so the wait itself can never hang and block claude.
-local proxy_ready=0
-local -ri max_polls=$(( ready_timeout_secs * 20 ))  # 20 polls/sec at sleep 0.05
-local -i poll=0
+proxy_ready=0
+max_polls=$(( ready_timeout_secs * 20 ))  # 20 polls/sec at sleep 0.05
+poll=0
 while (( poll++ < max_polls )); do
   if grep -q '^READY ' "$ready_log" 2>/dev/null; then
     proxy_ready=1
@@ -149,8 +144,8 @@ trap 'kill "$proxy_pid" 2>/dev/null' EXIT INT TERM
   --project "$project" \
   --cwd "$cwd" \
   --pid "$$" \
-  "${record_origin[@]}" \
-  || print -u2 "${_cca_prog}: failed to write start record for session $id"
+  ${record_origin[@]+"${record_origin[@]}"} \
+  || echo "${_cca_prog}: failed to write start record for session $id" >&2
 
 # 6. Point inference at the Proxy. This is the ONE place ANTHROPIC_BASE_URL is
 #    ever exported, and it is reached only AFTER readiness is confirmed above —
@@ -162,11 +157,11 @@ export ANTHROPIC_BASE_URL="$base_url"
 #    agent can pass `--dangerously-skip-permissions`). Not `exec` — we keep the
 #    shell alive so we can write the `end` record and the EXIT trap can reap the
 #    Proxy once claude returns.
-claude "${claude_perm[@]}" "$@"
+claude ${claude_perm[@]+"${claude_perm[@]}"} "$@"
 
 # 8. claude has returned. Write the Session's `end` record (via record-end, so
 #    the JSONL schema stays Rust-owned) — this is what moves the Session out of
 #    the active box and into Session History. Best-effort: if it fails, the TUI
 #    still detects the ended Session via pid-liveness once this shell exits.
 "$dash" record-end --id "$id" \
-  || print -u2 "${_cca_prog}: failed to write end record for session $id"
+  || echo "${_cca_prog}: failed to write end record for session $id" >&2

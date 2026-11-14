@@ -1,4 +1,4 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env bash
 # ccagent — launch an AGENT's `claude` behind a per-Session capture Proxy.
 #
 # The agent-session sibling of `cca`: same capture lifecycle, two differences —
@@ -12,10 +12,17 @@
 #   ln -s "$PWD/bin/ccagent" ~/.local/bin/ccagent
 # ccagent finds `claude-dash` via $CLAUDE_DASH_BIN or PATH.
 
-emulate -L zsh
 set -u
 
 _cca_prog=ccagent
 _cca_origin=agent
 _cca_perm=passthrough
-source "${0:A:h}/lib/cca-capture.sh"
+# Resolve this script's real directory through symlinks (portable: no readlink -f).
+_cca_src="${BASH_SOURCE[0]}"
+while [ -L "$_cca_src" ]; do
+  _cca_dir="$(cd -P "$(dirname "$_cca_src")" && pwd)"
+  _cca_src="$(readlink "$_cca_src")"
+  [[ "$_cca_src" != /* ]] && _cca_src="$_cca_dir/$_cca_src"
+done
+_cca_dir="$(cd -P "$(dirname "$_cca_src")" && pwd)"
+source "$_cca_dir/lib/cca-capture.sh"
