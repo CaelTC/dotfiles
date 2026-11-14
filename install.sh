@@ -246,10 +246,15 @@ copy_install() {
 
 HERDR_APP_HOME="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
 copy_install "$DOTFILES_DIR/herdr-app/firstmate-flag.svg" "$HERDR_APP_HOME/my-icons/firstmate-flag.svg"
+copy_install "$DOTFILES_DIR/herdr-app/minion.svg" "$HERDR_APP_HOME/my-icons/minion.svg"
 for mod_dir in "$DOTFILES_DIR"/herdr-app/mods/*/; do
   mod_dir="${mod_dir%/}"
   copy_install "$mod_dir" "$HERDR_APP_HOME/mods/$(basename "$mod_dir")"
 done
+
+# my-main: the main layout with the agents list, tab bar and pane header swapped
+# for the my-* mods above. Pick it with ctrl-shift-l (or layout.switch my-main).
+copy_install "$DOTFILES_DIR/herdr-app/layouts/my-main.json" "$HERDR_APP_HOME/layouts/my-main.json"
 
 # Merge into programs.json (never clobber: back up an existing one first, and
 # only replace the `firstmate` entry). Re-running yields the same file.

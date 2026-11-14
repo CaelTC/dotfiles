@@ -1,5 +1,6 @@
 // Firstmate's pirate flag: which terminals are a machine's firstmate primary, and the
-// flag "program" to draw for them instead of Claude's icon.
+// flag "program" to draw for them instead of Claude's icon. Minions (terminals the
+// `minion` CLI starts, labelled minion=<name>) get the minion picture and their own name.
 //
 // A primary is a live agent whose own process (the terminal's foreground) runs in a
 // firstmate home root: a folder with AGENTS.md, bin/fm-session-start.sh and state/.
@@ -18,6 +19,7 @@ import { svg, image } from "gpui-kit";
 import { terminals, exec, readTextFile, appHome } from "herdr";
 
 const FLAG = "my-icons/firstmate-flag.svg";
+const MINION = "my-icons/minion.svg";
 // A folder that wasn't a firstmate home is asked about again after this long.
 const RECHECK_MS = 60000;
 
@@ -29,11 +31,20 @@ export class FirstmateFlag {
     this.colors = new Map(); // machine ("" here) -> { color } once read
   }
 
-  // address -> flag program for every firstmate primary. Unknown folders and colors are
-  // looked up in the background; the copy redraws once they are known.
+  // address -> flag program for every firstmate primary (and minion program for every
+  // minion). Unknown folders and colors are looked up in the background; the copy redraws
+  // once they are known.
   scan(cx) {
     const out = new Map();
     for (const t of terminals()) {
+      const minion = t.labels?.minion;
+      if (minion && t.state === "live") {
+        out.set(t.address, {
+          ...t.program, key: "minion", name: minion, icon: MINION, tint: false,
+          tile: null, color: null, minion: true,
+        });
+        continue;
+      }
       const cwd = t.foreground?.cwd;
       // Sub-agents (started with hc run) are helpers, not the primary.
       if (t.state !== "live" || !t.program?.agent || t.parent || !cwd) continue;

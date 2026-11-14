@@ -303,7 +303,8 @@ export default class Agents extends View {
     const cwds = new Map(allPanes.map(p => [p.pane, p.cwd]));
     const proj = (a) => project(cwds.get(a.pane)) ?? a.space_name;
     const tabLabels = new Map(spaces().flatMap(s => s.tabs).map(tab => [tab.id, title(tab, leads.get(tab.id))]));
-    const labels = new Map(list.map(a => [a.address, tabLabels.get(a.tab) ?? (a.title || a.program?.name || "")]));
+    // A minion reads as its own name.
+    const labels = new Map(list.map(a => [a.address, (this.flags.get(a.address)?.minion ? this.flags.get(a.address).name : tabLabels.get(a.tab) ?? (a.title || a.program?.name || ""))]));
     const label = (a) => labels.get(a.address);
     const detail = new Map(list.map(a => [a.address, /^\d+$/.test(label(a)) ? null : label(a)]));
     const seen = {};

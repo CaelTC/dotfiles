@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- A minion: yellow capsule, one goggle on a strap, denim overalls. Full color (tint: false). -->
+  <g fill="none" stroke="#2b2410" stroke-width=".7" stroke-linecap="round">
+    <path d="M10.6 2.9 9.7 1.1M12 2.6V.6M13.4 2.9l.9-1.8"/>
+  </g>
+  <rect x="5" y="2.5" width="14" height="20" rx="7" fill="#fcd535"/>
+  <path d="M5.07 16.5H18.93A7 7 0 0 1 5.07 16.5Z" fill="#2f6db5"/>
+  <rect x="8.4" y="14.1" width="7.2" height="2.9" rx=".5" fill="#2f6db5"/>
+  <path d="M8.6 14.4 5.3 12.5M15.4 14.4l3.3-1.9" stroke="#2f6db5" stroke-width="1.1" stroke-linecap="round"/>
+  <circle cx="9.2" cy="14.7" r=".4" fill="#1d2a3a"/>
+  <circle cx="14.8" cy="14.7" r=".4" fill="#1d2a3a"/>
+  <rect x="4.8" y="7.5" width="14.4" height="2.3" rx=".4" fill="#2e2e2e"/>
+  <circle cx="12" cy="8.65" r="4" fill="#b9c0c8" stroke="#4a4f55" stroke-width=".8"/>
+  <circle cx="12" cy="8.65" r="2.85" fill="#fff"/>
+  <circle cx="12" cy="8.75" r="1.45" fill="#7a4a1c"/>
+  <circle cx="12" cy="8.75" r=".75" fill="#111"/>
+  <circle cx="12.55" cy="8.2" r=".4" fill="#fff"/>
+  <path d="M10.2 12.4q1.8 1.5 3.6 0" fill="none" stroke="#2b2410" stroke-width=".7" stroke-linecap="round"/>
+  <rect x="5" y="2.5" width="14" height="20" rx="7" fill="none" stroke="#2b2410" stroke-width=".7"/>
+</svg>
