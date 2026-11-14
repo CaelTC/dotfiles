@@ -7,3 +7,4 @@ Terminal=false
 Type=Application
 Icon=slack
 StartupNotify=true
+StartupWMClass=chrome-app.slack.com__client-Default

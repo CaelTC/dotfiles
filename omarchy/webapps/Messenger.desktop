@@ -2,8 +2,9 @@
 Version=1.0
 Name=Messenger
 Comment=Messenger
-Exec=omarchy-launch-webapp https://www.messenger.com
+Exec=omarchy-launch-webapp "https://www.facebook.com/messages/t"
 Terminal=false
 Type=Application
 Icon=messenger
 StartupNotify=true
+StartupWMClass=chrome-www.facebook.com__messages_t-Default

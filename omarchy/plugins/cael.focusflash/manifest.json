@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "cael.focusflash",
+  "name": "Focus flash",
+  "version": "1.0.0",
+  "description": "Flashes a small monitor icon in the middle of the screen that just took focus.",
+  "kinds": [
+    "panel"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "panel": "FocusFlash.qml"
+  }
+}

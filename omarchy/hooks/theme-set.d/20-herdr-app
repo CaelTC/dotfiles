@@ -1,0 +1,13 @@
+#!/bin/bash
+# Copy the current Omarchy theme into the Herdr desktop app as its `omarchy`
+# theme. The colors come from ~/.config/omarchy/themed/herdr-app.json.tpl,
+# rendered by `omarchy theme set`. Herdr hot-reloads themes/*.json. It is a
+# copy, not a link: Herdr refuses symlinks that lead out of its home.
+set -u
+
+SRC="$HOME/.local/state/omarchy/current/theme/herdr-app.json"
+DST="${HERDR_APP_HOME:-$HOME/.config/herdr-app}/themes/omarchy.json"
+
+[[ -f $SRC ]] || exit 0
+mkdir -p "$(dirname "$DST")"
+cmp -s "$SRC" "$DST" || cp "$SRC" "$DST"

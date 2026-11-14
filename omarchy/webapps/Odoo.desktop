@@ -7,3 +7,4 @@ Terminal=false
 Type=Application
 Icon=odoo-logo
 StartupNotify=true
+StartupWMClass=chrome-nootka.odoo.com__-Default

@@ -9,6 +9,9 @@ dofile((os.getenv("OMARCHY_PATH") or "/usr/share/omarchy") .. "/default/hypr/boo
 -- Or disable only bindings for Omarchy's preinstalled apps/web apps while
 -- keeping core window-manager bindings:
 -- omarchy_preinstalled_bindings = false
+--
+-- Disable Omarchy's default touchpad gestures. Add your own in hypr/input.lua.
+-- omarchy_default_gestures = false
 
 -- Load Omarchy defaults.
 require("default.hypr.omarchy")
@@ -33,3 +36,6 @@ o.window("chrom.*", { idle_inhibit = "fullscreen" })
 
 -- Local overrides of omarchy-* commands (clock screensaver). Must precede $OMARCHY_PATH/bin.
 hl.env("PATH", os.getenv("HOME") .. "/.local/share/omarchy-overrides/bin:" .. (os.getenv("OMARCHY_PATH") or "/usr/share/omarchy") .. "/bin:" .. os.getenv("PATH"))
+
+-- Herdr panes are terminals: tag it so Super+C/V send Ctrl+Shift+C/V (terminal.copy/paste).
+o.window("herdr-app", { tag = "+terminal" })

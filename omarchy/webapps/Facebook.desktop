@@ -7,3 +7,4 @@ Terminal=false
 Type=Application
 Icon=facebook
 StartupNotify=true
+StartupWMClass=chrome-facebook.com__-Default

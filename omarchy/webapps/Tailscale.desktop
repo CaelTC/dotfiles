@@ -7,3 +7,4 @@ Terminal=false
 Type=Application
 Icon=tailscale
 StartupNotify=true
+StartupWMClass=chrome-login.tailscale.com__admin_machines-Default
