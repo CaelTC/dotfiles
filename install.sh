@@ -127,9 +127,6 @@ fi
 if ! command -v cargo &>/dev/null; then
   warn "Rust/cargo not found — skipping claude-dash install. Install Rust from https://rustup.rs and re-run."
 else
-  # cca/ccagent have a zsh shebang (and use zsh-only syntax); Linux boxes
-  # default to bash and may ship without it.
-  command -v zsh &>/dev/null || { info "Installing zsh (cca/ccagent need it)..."; pkg_install zsh; }
   info "Building claude-dash (release)..."
   cargo build --release --manifest-path "$DOTFILES_DIR/claude-dash/Cargo.toml" --quiet
   symlink "$DOTFILES_DIR/claude-dash/target/release/claude-dash" "$HOME/.local/bin/claude-dash"
@@ -146,7 +143,7 @@ if command -v omarchy &>/dev/null; then
   for f in "$DOTFILES_DIR"/omarchy/hypr/*.lua; do
     symlink "$f" "$HOME/.config/hypr/$(basename "$f")"
   done
-  for f in shell.json shell.toml lockscreen.jpg branding/screensaver.txt bar/modules/notch.qml defaults/agent; do
+  for f in shell.json shell.toml lockscreen.jpg branding/screensaver.txt defaults/agent; do
     symlink "$DOTFILES_DIR/omarchy/$f" "$HOME/.config/omarchy/$f"
   done
   for plugin in "$DOTFILES_DIR"/omarchy/plugins/*/; do
@@ -154,6 +151,14 @@ if command -v omarchy &>/dev/null; then
   done
   for f in "$DOTFILES_DIR"/omarchy/themes/highline/*; do
     symlink "$f" "$HOME/.config/omarchy/themes/highline/$(basename "$f")"
+  done
+  # Theme templates and theme-set hooks (herdr-app.json.tpl + 20-herdr-app
+  # carry the Omarchy theme into the Herdr desktop app).
+  for f in "$DOTFILES_DIR"/omarchy/themed/*.tpl; do
+    symlink "$f" "$HOME/.config/omarchy/themed/$(basename "$f")"
+  done
+  for f in "$DOTFILES_DIR"/omarchy/hooks/theme-set.d/*; do
+    symlink "$f" "$HOME/.config/omarchy/hooks/theme-set.d/$(basename "$f")"
   done
   # Clock screensaver; hypr/hyprland.lua puts this dir ahead of $OMARCHY_PATH/bin.
   symlink "$DOTFILES_DIR/omarchy/bin/omarchy-screensaver" "$HOME/.local/share/omarchy-overrides/bin/omarchy-screensaver"
@@ -205,12 +210,51 @@ symlink "$DOTFILES_DIR/herdr/config.toml" "$HOME/.config/herdr/config.toml"
 
 herdr plugin link "$DOTFILES_DIR/herdr/plugins/two-tabs" &>/dev/null || true
 
-# ── Herdr app: firstmate pirate-flag icon ────────────────────────────────────
+# ── Herdr app (and herdr-core, `hc`) ─────────────────────────────────────────
+# The desktop app, separate from the herdr TUI above. Its installer puts the app
+# in ~/.local/share/herdr-app (Linux) or ~/Applications/Herdr.app (macOS, Apple
+# silicon only), links `herdr-app` into ~/.local/bin, and installs herdr-core
+# (`hc`) there if there's none yet. After that the app updates itself, so it is
+# only installed when missing.
+if command -v herdr-app &>/dev/null || [ -d "$HOME/Applications/Herdr.app" ] || [ -d /Applications/Herdr.app ]; then
+  info "Herdr app already installed"
+else
+  info "Installing the Herdr app..."
+  curl -fsSL https://releases.herdr.dev/app/install.sh | sh
+fi
+
+# ── minions (the `minion` CLI) ───────────────────────────────────────────────
+# Long-lived Claude agents across machines (github.com/CaelTC/minions). Every
+# machine keeps the framework at ~/Projects/minions (minions import its
+# framework/FRAMEWORK.md from there) and the CLI from its cli/ crate. The Herdr
+# mods below (minion-inbox, the Minions group in my-agents) call
+# ~/.cargo/bin/minion. Hosting minions or running a seat gate is set up by hand:
+# see the minions README.
+MINIONS_DIR="$HOME/Projects/minions"
+if [ ! -d "$MINIONS_DIR/.git" ]; then
+  info "Cloning minions..."
+  git clone git@github.com:CaelTC/minions.git "$MINIONS_DIR" || warn "minions clone failed (need ssh access to github.com/CaelTC/minions)"
+else
+  info "Updating minions..."
+  git -C "$MINIONS_DIR" pull --ff-only --quiet || warn "minions pull failed (local changes?) — leaving it as it is"
+fi
+if [ ! -d "$MINIONS_DIR/cli" ]; then
+  :
+elif ! command -v cargo &>/dev/null; then
+  warn "Rust/cargo not found — skipping the minion CLI. Install Rust from https://rustup.rs and re-run."
+else
+  info "Installing the minion CLI..."
+  cargo install --path "$MINIONS_DIR/cli" --quiet
+fi
+
+# ── Herdr app: mods, layout, firstmate pirate-flag icon ──────────────────────
 # The Herdr desktop app's agents list, tab bar and pane header are mods
 # (herdr-app/mods/my-{agents,tabs,pane}, used by the my-main layout). They show
 # a pirate flag instead of Claude's icon for an agent running in a firstmate
 # home (see herdr-app/mods/my-pane/firstmate.js), tinted with this machine's
 # color: the `firstmate` entry merged into programs.json (gen-programs.sh).
+# my-agents also groups minions under a Minions header with the minion icon,
+# and the minion-inbox mod is the mail badge in my-main's status row.
 if ! command -v jq &>/dev/null; then
   info "Installing jq..."
   pkg_install jq
@@ -255,6 +299,47 @@ done
 # my-main: the main layout with the agents list, tab bar and pane header swapped
 # for the my-* mods above. Pick it with ctrl-shift-l (or layout.switch my-main).
 copy_install "$DOTFILES_DIR/herdr-app/layouts/my-main.json" "$HERDR_APP_HOME/layouts/my-main.json"
+
+# Global keys for the mods, merged in so the rest of keys.json stays as it is:
+# ctrl-a opens the my-prefix mod (Herdr TUI prefix keys: ctrl-a, then a key),
+# ctrl-shift-m the minion-inbox (messages from minions waiting for approval).
+# Any edit freezes keys.json: new app default shortcuts must then be added by
+# hand. The app writes keys.json when it first opens, so on a new machine open
+# Herdr once, then re-run install.sh.
+KEYS_JSON="$HERDR_APP_HOME/keys.json"
+MY_KEYS='{"ctrl-a": "mod.open:my-prefix", "ctrl-shift-m": "mod.open:minion-inbox"}'
+if [ -f "$KEYS_JSON" ]; then
+  if [ "$(jq --argjson k "$MY_KEYS" '.global as $g | $k | to_entries | all(.value == $g[.key])' "$KEYS_JSON")" != "true" ]; then
+    backup_path="$BACKUP_DIR/${KEYS_JSON/#$HOME\//}"
+    mkdir -p "$(dirname "$backup_path")"
+    cp "$KEYS_JSON" "$backup_path"
+    jq --argjson k "$MY_KEYS" '.global += $k' "$backup_path" > "$KEYS_JSON"
+    info "Bound ctrl-a (my-prefix) and ctrl-shift-m (minion-inbox) in $KEYS_JSON"
+  fi
+else
+  warn "No $KEYS_JSON yet — open the Herdr app once, then re-run install.sh to bind ctrl-a and ctrl-shift-m"
+fi
+
+# Follow the Omarchy theme: settings.json's `theme` names themes/omarchy.json,
+# which the 20-herdr-app theme-set hook keeps current. Only that key changes.
+# Omarchy only: elsewhere (macOS) there is no omarchy theme, so the app keeps its own.
+SETTINGS_JSON="$HERDR_APP_HOME/settings.json"
+if ! command -v omarchy &>/dev/null; then
+  :
+elif [ -f "$SETTINGS_JSON" ]; then
+  if [ "$(jq -r '.theme // empty' "$SETTINGS_JSON" 2>/dev/null)" != "omarchy" ]; then
+    if merged="$(jq '.theme = "omarchy"' "$SETTINGS_JSON" 2>/dev/null)"; then
+      printf '%s\n' "$merged" > "$SETTINGS_JSON"
+      info "Set the Herdr app theme to omarchy in $SETTINGS_JSON"
+    else
+      warn "$SETTINGS_JSON is not valid JSON — set \"theme\": \"omarchy\" by hand"
+    fi
+  fi
+else
+  mkdir -p "$HERDR_APP_HOME"
+  printf '{ "theme": "omarchy" }\n' > "$SETTINGS_JSON"
+fi
+[ -x "$HOME/.config/omarchy/hooks/theme-set.d/20-herdr-app" ] && "$HOME/.config/omarchy/hooks/theme-set.d/20-herdr-app"
 
 # Merge into programs.json (never clobber: back up an existing one first, and
 # only replace the `firstmate` entry). Re-running yields the same file.

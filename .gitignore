@@ -3,3 +3,7 @@
 # Written by the Herdr app into linked mod folders
 herdr-app/mods/*/gpui-kit.d.ts
 herdr-app/mods/*/jsconfig.json
+# Personal photos: restored by hand (see install.sh), never in this public repo
+omarchy/themes/highline/backgrounds/
+# Backups the apps write next to configs
+*.bak.*

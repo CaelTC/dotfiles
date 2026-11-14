@@ -256,9 +256,12 @@ export default class Agents extends View {
     const urgency = new Map(list.map((a) => [a.address, Math.max(this.rank(a), ...this.tree(all, a.address).map((s) => RANK[kidStatus(s.t, this.listed)] ?? 0))]));
     const rankOf = (a) => urgency.get(a.address);
     if (byPriority) list = [...list].sort((x, y) => rankOf(y) - rankOf(x) || this.since(y) - this.since(x) || y.seq - x.seq);
+    // Minions (labelled minion=<name>) share one group under the pinned ones, whatever their space.
+    const isMinion = (a) => Boolean(this.flags.get(a.address)?.minion);
     const pinned = list.filter((a) => a.pinned);
-    const rest = list.filter((a) => !a.pinned);
-    list = [...pinned, ...rest];
+    const minions = list.filter((a) => !a.pinned && isMinion(a));
+    const rest = list.filter((a) => !a.pinned && !isMinion(a));
+    list = [...pinned, ...minions, ...rest];
     setAgentOrder(list.map((a) => a.address));
 
     const withKids = (a, i) => {
@@ -356,8 +359,9 @@ export default class Agents extends View {
         .child(svg(`mods/workspace-chrome/${isPinned ? "pin-off" : "pin"}.svg`).size(13));
       // Under a space header the space goes without saying; an automatic tab number says nothing.
       // Without a space header above (priority, pinned) the row names its space.
-      const full = byPriority || isPinned;
-      const name = full ? a.space_name || label(a) : more ?? (/^\d+$/.test(label(a)) ? proj(a) : label(a));
+      // Under the Minions header a minion goes by its own name.
+      const full = (byPriority || isPinned) && !(isMinion(a) && !isPinned);
+      const name = full ? a.space_name || label(a) : isMinion(a) ? label(a) : more ?? (/^\d+$/.test(label(a)) ? proj(a) : label(a));
       return h_flex()
         .id(`ag-${a.address}`)
         .px(8)
@@ -394,6 +398,7 @@ export default class Agents extends View {
     // Groups in list order: spaces (grouped) or priority sections. Agents of a
     // space are next to each other in agents(), so neighbours make a group.
     const groups = pinned.length ? [{ id: "pinned", label: "Pinned", status: null, members: pinned }] : [];
+    if (minions.length) groups.push({ id: "minions", label: "Minions", status: null, members: minions, always: true });
     for (const a of rest) {
       const r = rankOf(a) || RANK.idle;
       const id = byPriority ? `sec-${r}` : `sp-${a.space}`;
@@ -422,10 +427,10 @@ export default class Agents extends View {
           cx.notify();
         })
         .child(div().truncate().text_color(t[g.status] ?? t.dim).child(g.label))
-        .when(byPriority || !open, (el) => el.child(div().text_color(t.dim).child(String(g.members.length))))
+        .when(byPriority || g.always || !open, (el) => el.child(div().text_color(t.dim).child(String(g.members.length))))
         .child(div().flex_1())
         .when(!open, (el) => el
-          .when(!byPriority && top && top !== "idle", (el) => el.child(this.status(t, { status: top }, true)))
+          .when((!byPriority || g.always) && top && top !== "idle", (el) => el.child(this.status(t, { status: top }, true)))
           .child(svg("mods/workspace-chrome/chevron-right.svg").size(11).flex_none().text_color(t.dim)));
     };
     const rows = collapsed
