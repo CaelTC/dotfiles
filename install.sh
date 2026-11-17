@@ -104,6 +104,7 @@ else
 fi
 
 symlink "$DOTFILES_DIR/claude/settings.json" "$HOME/.claude/settings.json"
+symlink "$DOTFILES_DIR/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
 symlink "$DOTFILES_DIR/claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
 symlink "$DOTFILES_DIR/claude/agents" "$HOME/.claude/agents"
 
@@ -352,7 +353,7 @@ fi
 
 # ── Claude agent tools (axi) ─────────────────────────────────────────────────
 export PATH="$(npm prefix -g)/bin:$PATH"
-for pkg in lavish-axi gh-axi chrome-devtools-axi tasks-axi; do
+for pkg in gh-axi chrome-devtools-axi tasks-axi; do
   if ! command -v "$pkg" &>/dev/null; then
     info "Installing $pkg..."
     npm install -g "$pkg"
@@ -360,8 +361,8 @@ for pkg in lavish-axi gh-axi chrome-devtools-axi tasks-axi; do
   else
     info "$pkg already installed"
   fi
-  # SessionStart hooks only for the cheap dynamic-status tools; lavish-axi and
-  # chrome-devtools-axi cost ~2k tokens/session and are reachable via their skills.
+  # SessionStart hooks only for the cheap dynamic-status tools; chrome-devtools-axi
+  # costs ~2k tokens/session and is reachable via its skill.
   case "$pkg" in gh-axi|tasks-axi) "$pkg" setup hooks ;; esac
 done
 

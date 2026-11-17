@@ -16,8 +16,7 @@
       "Bash(cargo test *)",
       "Bash(gh-axi:*)",
       "Bash(tasks-axi:*)",
-      "Bash(chrome-devtools-axi:*)",
-      "Bash(lavish-axi:*)"
+      "Bash(chrome-devtools-axi:*)"
     ],
     "deny": [
       "Bash(gh:*)",
