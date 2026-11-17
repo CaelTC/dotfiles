@@ -182,22 +182,6 @@ else
   symlink "$DOTFILES_DIR/fzl/fzl" "$HOME/.config/omarchy/bar/scripts/fzl"
 fi
 
-# ── treehouse ────────────────────────────────────────────────────────────────
-if ! command -v treehouse &>/dev/null; then
-  info "Installing treehouse..."
-  curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh
-else
-  info "treehouse already installed"
-fi
-
-# ── no-mistakes ──────────────────────────────────────────────────────────────
-if ! command -v no-mistakes &>/dev/null; then
-  info "Installing no-mistakes..."
-  curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh
-else
-  info "no-mistakes already installed"
-fi
-
 # ── herdr ────────────────────────────────────────────────────────────────────
 if ! command -v herdr &>/dev/null; then
   info "Installing herdr..."
@@ -364,33 +348,6 @@ else
   mkdir -p "$HERDR_APP_HOME"
   printf '%s\n' "$PROGRAMS_NEW" > "$PROGRAMS_JSON"
   info "Wrote $PROGRAMS_JSON"
-fi
-
-# An earlier version linked a `firstmate` launcher to the claude binary to tell
-# the primary apart by process name; that never worked (Claude's own agent
-# report wins). Remove it, but only while it still points at claude.
-FM_LAUNCHER="$HOME/.local/bin/firstmate"
-if [ -L "$FM_LAUNCHER" ]; then
-  case "$(readlink "$FM_LAUNCHER")" in
-    */bin/claude|*/claude/versions/*)
-      rm "$FM_LAUNCHER"
-      info "Removed the old firstmate launcher symlink: $FM_LAUNCHER"
-      ;;
-  esac
-fi
-
-# ── firstmate: crew dispatch tiers ───────────────────────────────────────────
-# firstmate-config/crew-dispatch.json holds only the model/effort tiers
-# firstmate uses when it launches workers, so every machine dispatches the same
-# way. Install it into the firstmate home in this checkout (config/ is
-# gitignored there). Copied, not linked: firstmate's remote secondmate config
-# push refuses a symlinked source (bin/fm-remote-inherit-push.sh). A local copy
-# that differs is backed up first, never clobbered. Re-run install.sh after
-# editing it in dotfiles.
-if [ -f "$DOTFILES_DIR/firstmate/bin/fm-bootstrap.sh" ]; then
-  copy_install "$DOTFILES_DIR/firstmate-config/crew-dispatch.json" "$DOTFILES_DIR/firstmate/config/crew-dispatch.json"
-else
-  warn "firstmate submodule not checked out — skipping crew-dispatch.json (run: git -C \"$DOTFILES_DIR\" submodule update --init firstmate, then re-run)"
 fi
 
 # ── Claude agent tools (axi) ─────────────────────────────────────────────────

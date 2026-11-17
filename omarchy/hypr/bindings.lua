@@ -46,3 +46,9 @@ local function focus_monitor_and_flash(direction)
 end
 o.rebind("CTRL + ALT + TAB", "Focus on next monitor", focus_monitor_and_flash("+1"))
 o.rebind("CTRL + ALT + SHIFT + TAB", "Focus on previous monitor", focus_monitor_and_flash("-1"))
+
+-- Mac-style screenshots (MacBook has no Print key). Super+Shift+3/4/5 are taken
+-- by "move window to workspace", so these use Super+Ctrl+Shift. code:12/13/14 = 3/4/5.
+o.bind("SUPER + CTRL + SHIFT + code:12", "Screenshot fullscreen", "omarchy capture screenshot fullscreen")
+o.bind("SUPER + CTRL + SHIFT + code:13", "Screenshot region", "omarchy capture screenshot region")
+o.bind("SUPER + CTRL + SHIFT + code:14", "Screenshot (smart / window)", "omarchy capture screenshot")

@@ -4,8 +4,6 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 - Add durable project-specific notes here as they are discovered through real work.
 
-See the `skiff` skill for the remote-machine CLI reference.
-
 ## GitHub
 
 Use `gh-axi` for GitHub operations (`gh-axi pr view <n>`, `gh-axi issue list`, ...). Plain `gh` is denied on this machine.
