@@ -55,7 +55,8 @@ if [[ -o interactive && -n "$SSH_TTY" && -z "$TMUX" ]] && command -v tmux >/dev/
   exec tmux new-session -A -s main
 fi
 
-# cd goes through Omarchy's zoxide wrapper (zd), but `...` is expanded to ../..
+# cd goes through Omarchy's zoxide wrapper (zd) when it exists (plain cd on
+# macOS), but `...` is expanded to ../..
 # first - zd would treat bare dots as a zoxide query instead of a parent walk.
 # Aliased rather than named cd(): `cd() {` is a parse error while cd is aliased.
 _cd() {
@@ -65,8 +66,10 @@ _cd() {
             target+="/.."
         done
         builtin cd "$target"
-    else
+    elif (( $+functions[zd] || $+commands[zd] )); then
         zd "$@"
+    else
+        builtin cd "$@"
     fi
 }
 alias cd="_cd"
@@ -121,7 +124,11 @@ export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
 
 # ls on every cd (hook, so it survives a later chpwd redefinition and covers z/pushd)
 autoload -Uz add-zsh-hook
-_ls_on_cd() { eza -lh --group-directories-first --icons=auto }
+if (( $+commands[eza] )); then
+  _ls_on_cd() { eza -lh --group-directories-first --icons=auto }
+else
+  _ls_on_cd() { ls -C }
+fi
 add-zsh-hook chpwd _ls_on_cd
 export PICO_SDK_PATH="$HOME/pico-sdk"
 export PATH="$HOME/.local/opt/arm-gnu-toolchain/bin:$PATH"
